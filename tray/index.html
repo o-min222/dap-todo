@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>오늘 할 일</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --fg: #1b1d21; --muted: #6b7280; --line: #e3e6ea; --warn: #b45309; --danger: #dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --card: #1f2229; --fg: #e8eaed; --muted: #9aa1ac; --line: #2c3038; --warn: #fbbf24; --danger: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 12px/1.45 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; padding: 8px 10px 6px; flex: none; }
+  header b { font-size: 12px; }
+  header .grow { flex: 1; }
+  button { font: inherit; color: var(--muted); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+  button:hover { color: var(--fg); }
+  ul { list-style: none; margin: 0; padding: 0 10px 10px; overflow: auto; flex: 1; }
+  li { display: flex; gap: 7px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; margin-bottom: 4px; }
+  li .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .due { color: var(--muted); white-space: nowrap; }
+  .due.over { color: var(--danger); font-weight: 600; }
+  .due.today { color: var(--warn); font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; padding: 18px 10px; }
+</style>
+</head>
+<body>
+<header><b>오늘 할 일</b><span class="grow"></span><button id="open">열기</button></header>
+<ul id="list"><li class="empty">불러오는 중…</li></ul>
+<script>
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const post = (message) => window.parent.postMessage({ source: "dap-tray-panel", type: "message", message }, "*");
+
+document.getElementById("open").addEventListener("click", () => post({ type: "todo.open" }));
+
+function render(tasks) {
+  const list = document.getElementById("list");
+  const now = new Date();
+  const open = (tasks ?? []).filter((t) => t.status !== "done");
+  // 오늘까지 마감인 것 우선, 그다음 마감 없는 것. 트레이는 좁으니 5건까지.
+  const scored = open
+    .map((t) => {
+      const d = t.due ? new Date(t.due) : null;
+      const valid = d && !Number.isNaN(d.getTime());
+      return { t, d: valid ? d : null, due: valid ? d.getTime() : Infinity };
+    })
+    .sort((a, b) => a.due - b.due)
+    .slice(0, 5);
+  list.innerHTML = "";
+  if (!scored.length) {
+    list.innerHTML = '<li class="empty">할 일이 없어요 🎉</li>';
+    return;
+  }
+  for (const { t, d } of scored) {
+    const sameDay = d && d.toDateString() === now.toDateString();
+    const cls = d && d < now && !sameDay ? "over" : sameDay ? "today" : "";
+    const text = d ? (sameDay ? "오늘" : `${d.getMonth() + 1}/${d.getDate()}`) : "";
+    const li = document.createElement("li");
+    li.innerHTML = `<input type="checkbox" /><span class="t">${esc(t.title)}</span>` + (text ? `<span class="due ${cls}">${text}</span>` : "");
+    li.querySelector("input").addEventListener("change", () => post({ type: "todo.toggle", id: t.id }));
+    list.append(li);
+  }
+}
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window.parent) return; // 호스트가 보낸 것만 받는다
+  const data = event.data;
+  if (data?.source !== "dap-host" || data.type !== "message") return;
+  if (data.message?.type === "todo.today") render(data.message.tasks);
+});
+</script>
+</body>
+</html>

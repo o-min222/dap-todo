@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>할 일</title>
+<style>
+  /* DAP은 플러그인 문서에 토큰을 주입하지 않는다 — 테마는 prefers-color-scheme으로 직접 대응. */
+  :root {
+    --bg: #f6f7f9; --card: #fff; --fg: #1b1d21; --muted: #6b7280;
+    --line: #e3e6ea; --accent: #3b82f6; --danger: #dc2626; --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --card: #1f2229; --fg: #e8eaed; --muted: #9aa1ac;
+      --line: #2c3038; --accent: #60a5fa; --danger: #f87171; --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.5 system-ui, sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; gap: 6px; align-items: center; padding: 10px 12px;
+    border-bottom: 1px solid var(--line); flex: none; flex-wrap: wrap;
+  }
+  button {
+    font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 5px 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.link { border: none; background: none; color: var(--muted); padding: 4px 6px; }
+  button.link:hover { color: var(--danger); }
+  .grow { flex: 1; }
+  input, textarea {
+    font: inherit; color: var(--fg); background: var(--card);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
+  }
+  main { flex: 1; overflow: auto; padding: 12px; }
+
+  /* 리스트 */
+  .row {
+    display: flex; gap: 9px; align-items: center; background: var(--card);
+    border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin-bottom: 6px;
+  }
+  .row .title { flex: 1; }
+  .row.done .title { text-decoration: line-through; color: var(--muted); }
+  .due { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .due.over { color: var(--danger); font-weight: 600; }
+  .due.today { color: var(--warn); font-weight: 600; }
+
+  /* 칸반 */
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: start; }
+  .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 140px; }
+  .col h2 { margin: 2px 4px 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .col.over { border-color: var(--accent); }
+  .chip {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 9px; margin-bottom: 6px; cursor: grab;
+  }
+  .chip:active { cursor: grabbing; }
+
+  /* 초안 확인 */
+  .sheet {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .sheet > div {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    width: 100%; max-width: 560px; max-height: 100%; display: flex; flex-direction: column;
+  }
+  .sheet h2 { margin: 0; padding: 12px 14px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .sheet .body { padding: 12px 14px; overflow: auto; flex: 1; }
+  .sheet .foot { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .draft { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
+  .draft input[type=text] { flex: 1; }
+  .empty { color: var(--muted); text-align: center; padding: 32px 12px; }
+  pre { white-space: pre-wrap; word-break: break-all; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <button id="v-list" class="active">리스트</button>
+  <button id="v-kanban">칸반</button>
+  <span class="grow"></span>
+  <input id="new" type="text" placeholder="할 일 입력 후 Enter" style="width:180px" />
+  <input id="new-due" type="datetime-local" title="마감(선택)" />
+  <button id="x-clip">붙여넣기에서</button>
+  <button id="x-img">이미지에서</button>
+  <button id="x-mail">메일에서</button>
+</header>
+<main id="main"><div class="empty">불러오는 중…</div></main>
+<input id="file" type="file" accept="image/*" hidden />
+
+<script>
+const bridge = window.dapPalette;
+const $ = (id) => document.getElementById(id);
+let tasks = [];
+let view = "list";
+
+const COLUMNS = [{ id: "todo", label: "할 일" }, { id: "doing", label: "진행 중" }, { id: "done", label: "완료" }];
+
+const send = (cmd) => bridge.postMessage({ type: "todo.cmd", cmd });
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function dueInfo(task) {
+  if (!task.due) return { text: "", cls: "" };
+  const d = new Date(task.due);
+  if (Number.isNaN(d.getTime())) return { text: "", cls: "" };
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const hasTime = task.due.includes("T");
+  const text = sameDay
+    ? (hasTime ? `오늘 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : "오늘")
+    : `${d.getMonth() + 1}/${d.getDate()}`;
+  const cls = task.status !== "done" && d < now && !sameDay ? "over" : sameDay ? "today" : "";
+  return { text, cls };
+}
+
+function render() {
+  const main = $("main");
+  main.innerHTML = "";
+  if (!tasks.length) {
+    main.innerHTML = '<div class="empty">아직 할 일이 없어요.<br />위에 입력하거나 붙여넣기·이미지·메일에서 뽑아보세요.</div>';
+    return;
+  }
+  view === "kanban" ? renderKanban(main) : renderList(main);
+}
+
+function renderList(main) {
+  const sorted = [...tasks].sort((a, b) => (a.status === "done") - (b.status === "done") || a.order - b.order);
+  for (const t of sorted) {
+    const info = dueInfo(t);
+    const row = document.createElement("div");
+    row.className = "row" + (t.status === "done" ? " done" : "");
+    row.innerHTML =
+      `<input type="checkbox" ${t.status === "done" ? "checked" : ""} />` +
+      `<span class="title">${esc(t.title)}</span>` +
+      (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "") +
+      `<button class="link" title="삭제">✕</button>`;
+    row.querySelector("input").addEventListener("change", () => send({ type: "toggle", id: t.id }));
+    row.querySelector("button").addEventListener("click", () => send({ type: "delete", id: t.id }));
+    main.append(row);
+  }
+}
+
+function renderKanban(main) {
+  const board = document.createElement("div");
+  board.className = "board";
+  for (const col of COLUMNS) {
+    const box = document.createElement("section");
+    box.className = "col";
+    box.innerHTML = `<h2>${col.label}</h2>`;
+    for (const t of tasks.filter((x) => x.status === col.id).sort((a, b) => a.order - b.order)) {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      chip.draggable = true;
+      const info = dueInfo(t);
+      chip.innerHTML = `${esc(t.title)}${info.text ? ` <span class="due ${info.cls}">${info.text}</span>` : ""}`;
+      chip.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.id));
+      box.append(chip);
+    }
+    box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("over"); });
+    box.addEventListener("dragleave", () => box.classList.remove("over"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault();
+      box.classList.remove("over");
+      const id = e.dataTransfer.getData("text/plain");
+      if (id) send({ type: "move", id, status: col.id });
+    });
+    board.append(box);
+  }
+  main.append(board);
+}
+
+/* 초안 확인 — 자동 등록은 없다. 항상 사용자가 훑고 [등록]을 눌러야 들어간다. */
+function showDrafts(drafts, raw) {
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  const rows = drafts
+    .map(
+      (d, i) =>
+        `<div class="draft" data-i="${i}">` +
+        `<input type="checkbox" checked />` +
+        `<input type="text" value="${esc(d.title)}" />` +
+        `<input type="datetime-local" value="${d.due && d.due.includes("T") ? esc(d.due) : ""}" />` +
+        `</div>`,
+    )
+    .join("");
+  sheet.innerHTML =
+    `<div><h2>${drafts.length ? `찾은 할 일 ${drafts.length}건 — 확인 후 등록` : "할 일을 찾지 못했어요"}</h2>` +
+    `<div class="body">${rows || `<pre>${esc(raw || "")}</pre>`}</div>` +
+    `<div class="foot"><button id="d-cancel">닫기</button>` +
+    (drafts.length ? `<button id="d-ok" class="active">등록</button>` : "") +
+    `</div></div>`;
+  document.body.append(sheet);
+  sheet.querySelector("#d-cancel").addEventListener("click", () => sheet.remove());
+  sheet.querySelector("#d-ok")?.addEventListener("click", () => {
+    const picked = [...sheet.querySelectorAll(".draft")]
+      .filter((row) => row.querySelector('input[type=checkbox]').checked)
+      .map((row) => ({
+        title: row.querySelector('input[type=text]').value,
+        due: row.querySelector('input[type="datetime-local"]').value,
+        source: "extract",
+      }))
+      .filter((t) => t.title.trim());
+    if (picked.length) send({ type: "addMany", tasks: picked });
+    sheet.remove();
+  });
+}
+
+function busy(label) {
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.innerHTML = `<div><div class="body"><div class="empty">${label}</div></div></div>`;
+  document.body.append(sheet);
+  return sheet;
+}
+
+/* 이벤트 */
+$("v-list").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "list" }));
+$("v-kanban").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "kanban" }));
+
+$("new").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing) return; // IME 조합 중 Enter는 확정이지 제출이 아니다
+  const title = $("new").value.trim();
+  if (!title) return;
+  send({ type: "add", task: { title, due: $("new-due").value } });
+  $("new").value = "";
+  $("new-due").value = "";
+});
+
+let pending = null;
+const startExtract = (payload, label) => {
+  pending = busy(label);
+  bridge.postMessage({ type: "todo.extract", ...payload });
+};
+$("x-clip").addEventListener("click", () => startExtract({ source: "clipboard" }, "복사한 내용에서 할 일을 찾는 중…"));
+$("x-mail").addEventListener("click", () => startExtract({ source: "gmail" }, "메일에서 할 일을 찾는 중…"));
+$("x-img").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", () => {
+  const file = $("file").files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => startExtract({ source: "image", dataUrl: reader.result }, "이미지에서 할 일을 찾는 중…");
+  reader.readAsDataURL(file);
+  $("file").value = "";
+});
+
+bridge.onMessage((msg) => {
+  if (msg?.type === "todo.state") {
+    tasks = msg.tasks ?? [];
+    view = msg.view ?? "list";
+    $("v-list").classList.toggle("active", view === "list");
+    $("v-kanban").classList.toggle("active", view === "kanban");
+    render();
+  }
+  if (msg?.type === "todo.drafts") {
+    pending?.remove();
+    pending = null;
+    showDrafts(msg.drafts ?? [], msg.raw);
+  }
+});
+
+bridge.postMessage({ type: "todo.ready" });
+</script>
+</body>
+</html>
