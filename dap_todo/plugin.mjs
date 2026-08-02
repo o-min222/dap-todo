@@ -666,8 +666,20 @@ export function activate(ctx) {
     }
   };
 
-  /** 메일: 사용자 CLI에 붙은 Gmail 커넥터가 처리한다 — DAP은 메일 권한을 따로 받지 않는다. */
+  /**
+   * 메일: 사용자 CLI에 붙은 Gmail 커넥터가 처리한다 — DAP은 메일 권한을 따로 받지 않는다.
+   *
+   * 물어보기 전에 커넥터 상태를 먼저 본다. 커넥터가 없어도 LLM 은 그냥 답을 만드는데,
+   * 모델이 자기 말로 쓴 "메일을 읽지 못했다" 가 그대로 사용자 화면에 뜬다 — 문구는 매번 다르고
+   * 무엇을 해야 하는지가 없다. 호스트의 안내 문구로 바꿔 준다.
+   */
   const extractGmail = async (days = 3) => {
+    // unavailable 일 때만 막는다. unknown 은 판별 자체를 못 한 것이라, 여기서 잠그면
+    // 멀쩡한 환경에서 헛되이 기능이 죽는다. 구버전 호스트면 undefined 라 그냥 지나간다.
+    const connector = await ctx.host.connectors?.status("gmail").catch(() => null);
+    if (connector?.state === "unavailable") {
+      return { drafts: [], raw: connector.hint ?? "메일 커넥터가 연결돼 있지 않아요." };
+    }
     const today = new Date().toISOString().slice(0, 10);
     const reply = await ctx.host.llm.generate(
       [

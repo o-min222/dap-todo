@@ -10,6 +10,7 @@ surface: user
 permissions:
   - storage.private
   - window.palette
+  - connectors.read
 surface_slots:
   - tray_panel
   - briefing.daily

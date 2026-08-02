@@ -21,6 +21,9 @@ for (const slot of ["tray_panel", "briefing.daily"]) {
   assert.ok(manifest.includes(slot), `surface_slots에 ${slot}이 있어야 한다`);
 }
 assert.ok(manifest.includes("todo_summary"), "context_contributors 선언이 없으면 activate가 던진다");
+// 커넥터 상태 조회는 게이팅된다 — 선언이 없으면 ctx.host.connectors 가 undefined 라
+// 메일 추출이 조용히 옛 동작(모델 원문 노출)으로 돌아간다.
+assert.ok(manifest.includes("connectors.read"), "connectors.read 선언이 없으면 메일 안내가 죽는다");
 for (const file of ["README.md", "LICENSE", "palette/index.html", "tray/index.html"]) {
   assert.ok(read(file).length > 100, `${file}이 릴리스에 포함돼야 한다`);
 }
@@ -31,6 +34,11 @@ assert.ok(icon.length < 512 * 1024, "icon.png는 512KB 미만이어야 로드된
 // 설치기는 파일을 그대로 내려받는다 — 번들 단계가 없으니 npm 의존성이 있으면 부팅 때 죽는다.
 const source = read("dap_todo/plugin.mjs");
 assert.ok(source.includes('icon: "icon.png"'), "래디얼 등록이 아이콘을 가리켜야 한다");
+// 구버전 호스트에는 ctx.host.connectors 가 없다 — 옵셔널 체이닝이 빠지면 메일 추출이 통째로 던진다.
+assert.ok(
+  source.includes("ctx.host.connectors?.status("),
+  "커넥터 조회는 옵셔널 체이닝으로 불러야 구버전 호스트에서 죽지 않는다",
+);
 for (const [, spec] of source.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)) {
   assert.ok(spec.startsWith("node:"), `자기완결이어야 한다 — bare import 발견: ${spec}`);
 }
