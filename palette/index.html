@@ -22,8 +22,12 @@
   }
   header {
     display: flex; gap: 6px; align-items: center; padding: 10px 12px;
-    border-bottom: 1px solid var(--line); flex: none; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line); flex: none;
   }
+  /* 좁은 창에서도 한 줄을 유지한다 — 입력이 먼저 줄고 버튼은 안 줄어든다. */
+  header #new { flex: 1; min-width: 90px; }
+  header button, header #new-due { flex: none; }
+  .label { color: var(--muted); font-size: 12px; margin-left: 4px; }
   button {
     font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 5px 10px; cursor: pointer;
@@ -84,11 +88,12 @@
   <button id="v-list" class="active">리스트</button>
   <button id="v-kanban">칸반</button>
   <span class="grow"></span>
-  <input id="new" type="text" placeholder="할 일 입력 후 Enter" style="width:180px" />
+  <input id="new" type="text" placeholder="할 일 입력 후 Enter" />
   <input id="new-due" type="datetime-local" title="마감(선택)" />
-  <button id="x-clip">붙여넣기에서</button>
-  <button id="x-img">이미지에서</button>
-  <button id="x-mail">메일에서</button>
+  <span class="label">추출</span>
+  <button id="x-clip" title="복사한 글에서 할 일 뽑기">붙여넣기</button>
+  <button id="x-img" title="이미지에서 할 일 뽑기">이미지</button>
+  <button id="x-mail" title="최근 메일에서 할 일 뽑기">메일</button>
 </header>
 <main id="main"><div class="empty">불러오는 중…</div></main>
 <input id="file" type="file" accept="image/*" hidden />
