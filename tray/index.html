@@ -48,7 +48,7 @@ function render(tasks) {
     .slice(0, 5);
   list.innerHTML = "";
   if (!scored.length) {
-    list.innerHTML = '<li class="empty">할 일이 없어요 🎉</li>';
+    list.innerHTML = '<li class="empty">할 일이 없어요</li>';
     return;
   }
   for (const { t, d } of scored) {

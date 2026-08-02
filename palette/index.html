@@ -92,12 +92,22 @@
   .focus .f .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .focus .more { font-size: 11px; color: var(--muted); padding-left: 4px; }
 
-  /* ── 중요도 칩 ── */
-  .pri { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
-  .pri.high { background: var(--hi-bg); color: var(--hi-fg); }
-  .pri.medium { background: var(--md-bg); color: var(--md-fg); }
-  .pri.low { background: var(--lo-bg); color: var(--lo-fg); }
-  .pri.hold { background: var(--track); color: var(--muted); }
+  /* ── 중요도 ──
+     배경 채운 알약 대신 얇은 테두리 — 화면에 칩이 여럿 겹치면 알약은 금세 시끄러워진다. */
+  .pri {
+    font-size: 11px; padding: 0 6px; border-radius: 4px; white-space: nowrap;
+    font-weight: 600; border: 1px solid currentColor; line-height: 16px;
+  }
+  .pri.high { color: var(--hi-fg); }
+  .pri.medium { color: var(--md-fg); }
+  .pri.low { color: var(--lo-fg); }
+  .pri.hold { color: var(--muted); }
+
+  /* 메모·기록 유무는 이모지 대신 작은 글자 라벨로. */
+  .tagmark {
+    font-size: 10px; color: var(--muted); letter-spacing: .2px; white-space: nowrap;
+    padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; line-height: 15px;
+  }
   .row.held { opacity: .72; border-style: dashed; }
 
   /* ── 리스트 ── */
@@ -156,9 +166,14 @@
   .act .when { font-size: 11px; color: var(--muted); }
   .act .txt { font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .act .att {
-    font-size: 11px; color: var(--accent); margin-top: 3px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--accent);
+    margin-top: 3px; overflow: hidden;
   }
+  .act .att .k {
+    flex: none; color: var(--muted); font-size: 10px; border: 1px solid var(--line);
+    border-radius: 3px; padding: 0 4px; line-height: 14px;
+  }
+  .act .att { white-space: nowrap; }
   .hintline { color: var(--muted); font-size: 11px; min-height: 16px; }
   .hintline b { color: var(--accent); }
 
@@ -185,7 +200,7 @@
   <span class="name">할 일</span>
   <span class="grow"></span>
   <div class="nums" id="stats"></div>
-  <button class="close" id="close" title="닫기">✕</button>
+  <button class="close" id="close" title="닫기">×</button>
 </div>
 <div class="bar"><i id="bar" style="width:0%"></i></div>
 
@@ -273,7 +288,7 @@ function renderFocus(main) {
     row.innerHTML =
       priChip(t.priority) +
       `<span class="t">${esc(t.title)}</span>` +
-      (t.notes?.trim() ? `<span class="note">📝</span>` : "") +
+      (t.notes?.trim() ? `<span class="tagmark">메모</span>` : "") +
       (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "");
     row.addEventListener("click", () => openPage(t));
     box.append(row);
@@ -325,7 +340,7 @@ function renderKanban(main) {
         // 노트가 있으면 첫 줄을 미리 보여준다 — 안에 뭐가 있는지 열기 전에 알 수 있게.
         (note ? `<div class="note">${esc(note.split("\n")[0].slice(0, 60))}</div>` : "") +
         // 열지 않고도 DAP이 뭘 붙여놨는지 보이게.
-        (t.activity?.length ? `<div class="note">🔗 작업 기록 ${t.activity.length}건</div>` : "") +
+        (t.activity?.length ? `<div class="note">기록 ${t.activity.length}건</div>` : "") +
         (info.text || t.tags?.length
           ? `<div class="meta">${info.text ? `<span class="due ${info.cls}">${info.text}</span>` : ""}` +
             `${t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : ""}</div>`
@@ -421,8 +436,8 @@ function openPage(existing, status) {
       `<div class="acts"><h3>작업 기록 <span>${acts.length}</span></h3>` +
       [...acts].reverse().slice(0, 20).map((a) => {
         const when = String(a.at ?? "").slice(5, 16).replace("T", " ");
-        const links = (a.links ?? []).map((u) => `<div class="att">🔗 ${esc(u)}</div>`).join("");
-        const files = (a.files ?? []).map((f) => `<div class="att">📎 ${esc(f)}</div>`).join("");
+        const links = (a.links ?? []).map((u) => `<div class="att"><span class="k">링크</span>${esc(u)}</div>`).join("");
+        const files = (a.files ?? []).map((f) => `<div class="att"><span class="k">파일</span>${esc(f)}</div>`).join("");
         return `<div class="act"><div class="when">${esc(when)}${a.by ? ` · ${esc(a.by)}` : ""}</div>` +
           `<div class="txt">${esc(a.text ?? "")}</div>${links}${files}</div>`;
       }).join("") + `</div>`;

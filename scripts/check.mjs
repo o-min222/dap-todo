@@ -41,6 +41,10 @@ for (const page of ["palette/index.html", "tray/index.html"]) {
   assert.ok(scripts.length, `${page}에 script가 있어야 한다`);
   scripts.forEach((m, i) => new vm.Script(m[1], { filename: `${page}#${i + 1}` }));
 }
+// 이모지 대신 글자 라벨로 — 픽토그램은 플랫폼마다 다르게 그려지고 화면 톤을 흐린다.
+for (const page of ["palette/index.html", "tray/index.html"]) {
+  assert.doesNotMatch(read(page), /\p{Extended_Pictographic}/u, `${page}에 이모지가 남아 있다`);
+}
 // UI 페이지는 CSP로 connect-src 'none' — 네트워크를 부르면 조용히 실패한다.
 for (const page of ["palette/index.html", "tray/index.html"]) {
   assert.doesNotMatch(read(page), /\bfetch\s*\(|XMLHttpRequest|WebSocket/, `${page}는 네트워크를 쓸 수 없다`);
