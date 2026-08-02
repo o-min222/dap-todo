@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const STATUSES = ["todo", "doing", "done"];
+/** 빈 문자열 = 중요도 없음. 노션처럼 "굳이 안 정해도 되는" 속성으로 둔다. */
+export const PRIORITIES = ["high", "medium", "low"];
 const MAX_AI_CHARS = 120;
 const REMIND_LEAD_MIN = 10;
 const TICK_MS = 60_000;
@@ -43,6 +45,7 @@ export function normalizeTask(raw, now = new Date(), id = null) {
     title,
     notes: String(raw?.notes ?? "").trim().slice(0, 2000),
     status,
+    priority: PRIORITIES.includes(raw?.priority) ? raw.priority : "",
     due: typeof raw?.due === "string" && raw.due.trim() ? raw.due.trim() : "",
     tags,
     order: Number.isFinite(raw?.order) ? raw.order : now.getTime(),
@@ -80,6 +83,11 @@ export function applyCommand(tasks, cmd, now = new Date()) {
       if (typeof cmd.title === "string" && cmd.title.trim()) patch.title = cmd.title.trim().slice(0, 200);
       if (typeof cmd.notes === "string") patch.notes = cmd.notes.slice(0, 2000);
       if (typeof cmd.due === "string") patch.due = cmd.due.trim();
+      // 빈 문자열도 유효한 값(= 중요도 없음)이라 includes 검사 전에 따로 통과시킨다.
+      if (cmd.priority === "" || PRIORITIES.includes(cmd.priority)) patch.priority = cmd.priority;
+      if (Array.isArray(cmd.tags)) {
+        patch.tags = cmd.tags.map((t) => String(t).trim().slice(0, 24)).filter(Boolean).slice(0, 6);
+      }
       if (!Object.keys(patch).length) return list;
       return list.map((t) => (t.id === cmd.id ? { ...t, ...patch } : t));
     }
@@ -115,16 +123,145 @@ export function parseDraftJson(raw) {
       const title = String(item?.title ?? item?.할일 ?? "").trim();
       if (!title) return null;
       const due = typeof item?.due === "string" ? item.due.trim() : "";
+      const priority = String(item?.priority ?? "").trim().toLowerCase();
       return {
         title: title.slice(0, 200),
         notes: String(item?.notes ?? "").trim().slice(0, 2000),
         // 모델이 "미정"/"없음" 같은 값을 넣는 일이 잦다 — 날짜 모양만 통과시킨다.
         due: /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?$/.test(due) ? due.replace(" ", "T") : "",
+        priority: PRIORITIES.includes(priority) ? priority : "",
         tags: Array.isArray(item?.tags) ? item.tags.map(String).slice(0, 6) : [],
       };
     })
     .filter(Boolean)
     .slice(0, 20);
+}
+
+/* ── 로컬 힌트 추출 ──
+ * 노션 페이지에 본문을 치는 동안 속성(마감·중요도·태그)을 즉시 채우기 위한 것.
+ * LLM은 한 번에 30~60초라 타이핑 중에는 못 쓴다 — 여기는 정규식만, AI 분석은 별도 버튼.
+ */
+
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const pad2 = (n) => String(n).padStart(2, "0");
+const dateStr = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const addDays = (d, n) => {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+};
+/** 그 주의 월요일. 주 경계는 한국 관례대로 월요일 시작. */
+const mondayOf = (d) => addDays(d, -((d.getDay() + 6) % 7));
+
+/** 본문에서 마감일(date 부분)을 찾는다. 못 찾으면 null. */
+function findDate(text, now) {
+  const t = text.replace(/\s+/g, " ");
+  let m;
+
+  if ((m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t))) {
+    return dateStr(new Date(+m[1], +m[2] - 1, +m[3]));
+  }
+  if ((m = /(\d{1,2})월\s*(\d{1,2})일/.exec(t))) {
+    return dateStr(new Date(now.getFullYear(), +m[1] - 1, +m[2]));
+  }
+  // 8/5 — 시각(14:30)이나 분수와 헷갈리지 않게 숫자에 둘러싸이지 않은 것만.
+  if ((m = /(?:^|[^\d:/])(\d{1,2})\/(\d{1,2})(?![\d:/])/.exec(t))) {
+    const mo = +m[1];
+    const day = +m[2];
+    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) {
+      return dateStr(new Date(now.getFullYear(), mo - 1, day));
+    }
+  }
+  if (/오늘/.test(t)) return dateStr(now);
+  if (/내일/.test(t)) return dateStr(addDays(now, 1));
+  if (/모레/.test(t)) return dateStr(addDays(now, 2));
+  if (/글피/.test(t)) return dateStr(addDays(now, 3));
+
+  if ((m = /(다음\s*주|담주|이번\s*주|금주)?\s*([일월화수목금토])요일/.exec(t))) {
+    const target = WEEKDAYS.indexOf(m[2]);
+    const monday = mondayOf(now);
+    const offsetFromMonday = (target + 6) % 7; // 월=0 … 일=6
+    if (/다음|담/.test(m[1] ?? "")) return dateStr(addDays(monday, 7 + offsetFromMonday));
+    if (m[1]) return dateStr(addDays(monday, offsetFromMonday));
+    // 수식어 없는 "금요일" = 오늘 포함 다음 도래일
+    const ahead = (target - now.getDay() + 7) % 7;
+    return dateStr(addDays(now, ahead));
+  }
+  if (/다음\s*주|담주/.test(t)) return dateStr(addDays(mondayOf(now), 7));
+  return null;
+}
+
+/** 본문에서 시각(HH:mm)을 찾는다. 못 찾으면 null. */
+function findTime(text) {
+  let m;
+  if ((m = /(\d{1,2}):(\d{2})/.exec(text))) {
+    const h = +m[1];
+    const min = +m[2];
+    if (h <= 23 && min <= 59) return `${pad2(h)}:${pad2(min)}`;
+  }
+  // `시` 뒤에 올 수 있는 것을 제한한다 — 안 그러면 "2026-09-01 시작"의 "01 시"를 시각으로 읽는다.
+  if ((m = /(오전|오후|아침|점심|저녁|밤|새벽)?\s*(\d{1,2})\s*시(?=$|[\s,.)\d]|에|까지|부터|반|분|경|쯤)\s*(반|(\d{1,2})\s*분)?/.exec(text))) {
+    let h = +m[2];
+    if (h > 23) return null;
+    const period = m[1] ?? "";
+    // 12시간제 표현이 붙었을 때만 보정한다. "14시"는 그대로 둔다.
+    if (/오후|저녁|밤/.test(period) && h < 12) h += 12;
+    if (/오전|아침|새벽/.test(period) && h === 12) h = 0;
+    const min = m[3] === "반" ? 30 : m[4] ? +m[4] : 0;
+    if (min > 59) return null;
+    return `${pad2(h)}:${pad2(min)}`;
+  }
+  return null;
+}
+
+/**
+ * 본문에서 마감·중요도·태그를 뽑는다. 값이 없으면 그 키를 아예 담지 않는다 —
+ * 호출자가 "찾은 것만" 덮어쓸 수 있어야 사용자가 손으로 고친 값을 지우지 않는다.
+ */
+export function parseHints(text, now = new Date()) {
+  const src = String(text ?? "");
+  const out = {};
+  if (!src.trim()) return out;
+
+  const date = findDate(src, now);
+  const time = findTime(src);
+  if (date) out.due = time ? `${date}T${time}` : date;
+  else if (time) out.due = `${dateStr(now)}T${time}`; // 날짜 없이 시각만 = 오늘
+
+  // 급[함해하히] = 급함/급해/급하게/급하다/급히를 한 번에 잡는다.
+  if (/긴급|급[함해하히]|최우선|중요|필수|asap|!!/i.test(src)) out.priority = "high";
+  else if (/나중에|천천히|여유|언젠가|낮음|덜 급/i.test(src)) out.priority = "low";
+  else if (/보통|중간/.test(src)) out.priority = "medium";
+
+  const tags = [...src.matchAll(/#([^\s#,.]{1,24})/g)].map((m) => m[1]);
+  if (tags.length) out.tags = [...new Set(tags)].slice(0, 6);
+
+  return out;
+}
+
+/**
+ * 상단 상태표시줄 수치. UI에 같은 로직을 복제하지 않으려고 여기서 계산해 내려보낸다
+ * (팔레트는 별도 문서라 import를 못 한다).
+ */
+export function stats(tasks, now = new Date()) {
+  const list = tasks ?? [];
+  const open = list.filter(isOpen);
+  const byDue = (pred) =>
+    open.filter((t) => {
+      const d = dueDate(t);
+      return d ? pred(d) : false;
+    }).length;
+  const done = list.length - open.length;
+  return {
+    total: list.length,
+    todo: list.filter((t) => t.status === "todo").length,
+    doing: list.filter((t) => t.status === "doing").length,
+    done,
+    overdue: byDue((d) => d < now && !isSameDay(d, now)),
+    today: byDue((d) => isSameDay(d, now)),
+    high: open.filter((t) => t.priority === "high").length,
+    percent: list.length ? Math.round((done / list.length) * 100) : 0,
+  };
 }
 
 /** 매 대화 턴에 프롬프트로 들어가는 한 줄. 예산이 빡빡하므로 목록 덤프 금지. */
@@ -139,7 +276,9 @@ export function summarizeForAi(tasks, now = new Date()) {
     const d = dueDate(t);
     return d && isSameDay(d, now);
   });
+  const high = open.filter((t) => t.priority === "high");
   const parts = [`미완 ${open.length}건`];
+  if (high.length) parts.push(`중요 ${high.length}건`);
   if (overdue.length) parts.push(`지난 마감 ${overdue.length}건`);
   if (today.length) parts.push(`오늘 마감: ${today.map((t) => t.title).join(", ")}`);
   return parts.join(" · ").slice(0, MAX_AI_CHARS);
@@ -174,14 +313,53 @@ export function dueSoon(tasks, now = new Date(), leadMinutes = REMIND_LEAD_MIN, 
 export function extractionPrompt(text, todayISO) {
   return [
     "아래 내용에서 사용자가 해야 할 일만 뽑아 JSON 배열로만 답해.",
-    "형식: [{\"title\":\"짧은 할 일\",\"due\":\"YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm\",\"notes\":\"부연\"}]",
+    '형식: [{"title":"짧은 할 일","due":"YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm","priority":"high|medium|low","notes":"부연","tags":["태그"]}]',
     `오늘은 ${todayISO} 야. "내일", "다음 주 화요일" 같은 표현은 실제 날짜로 바꿔.`,
-    "마감을 알 수 없으면 due 는 빈 문자열. 할 일이 없으면 [] 만 답해.",
+    "마감을 알 수 없으면 due 는 빈 문자열, 중요도를 알 수 없으면 priority 는 빈 문자열.",
+    "할 일이 없으면 [] 만 답해.",
     "설명이나 코드펜스 없이 JSON 배열만 출력해.",
     "",
     "---",
     String(text ?? "").slice(0, 12000),
   ].join("\n");
+}
+
+/**
+ * 등록 버튼을 누른 순간 AI에게 넘기는 프롬프트. 사용자가 막 적은 초안을 다듬는 용도라
+ * parseDraftJson이 그대로 읽을 수 있게 "한 건짜리 배열"로 받는다.
+ */
+export function composePrompt(draft, todayISO) {
+  return [
+    "아래는 사용자가 방금 적은 할 일 메모야. 내용을 검토해서 깔끔한 할 일 한 건으로 정리해줘.",
+    "- title: 한눈에 보이는 짧은 제목 (군더더기·날짜 표현 제거)",
+    "- notes: 남길 만한 세부 내용만. 없으면 빈 문자열",
+    "- due/priority/tags: 메모에서 읽어낼 수 있으면 채우고, 아니면 빈 값",
+    '형식(한 건짜리 배열): [{"title":"…","due":"YYYY-MM-DDTHH:mm","priority":"high|medium|low","notes":"…","tags":["…"]}]',
+    `오늘은 ${todayISO} 야. "내일", "다음 주 화요일" 같은 표현은 실제 날짜로 바꿔.`,
+    "설명이나 코드펜스 없이 JSON 배열만 출력해.",
+    "",
+    "---",
+    `제목: ${String(draft?.title ?? "").slice(0, 200)}`,
+    `내용: ${String(draft?.notes ?? "").slice(0, 4000)}`,
+  ].join("\n");
+}
+
+/**
+ * AI가 다듬은 결과와 사용자가 적은 값을 합친다.
+ * 제목·본문은 AI 정리본을 쓰되, **사용자가 직접 정한 마감/중요도/태그는 AI가 못 덮어쓴다** —
+ * 사용자의 명시적 선택을 모델 추측으로 되돌리면 안 된다. 빈 칸만 AI가 채운다.
+ */
+export function mergeComposed(userDraft, aiDraft) {
+  const u = userDraft ?? {};
+  const a = aiDraft ?? {};
+  return {
+    title: (a.title || "").trim() || String(u.title ?? "").trim(),
+    notes: (a.notes ?? "").trim() || String(u.notes ?? "").trim(),
+    due: String(u.due ?? "").trim() || a.due || "",
+    priority: String(u.priority ?? "").trim() || a.priority || "",
+    tags: (Array.isArray(u.tags) && u.tags.length ? u.tags : a.tags) ?? [],
+    source: "compose",
+  };
 }
 
 /* ─────────────────────────── 플러그인 배선 ─────────────────────────── */
@@ -206,7 +384,7 @@ export function activate(ctx) {
 
   /** 살아있는 표면 전부에 현재 상태를 밀어준다. */
   const push = () => {
-    const payload = { type: "todo.state", tasks, view };
+    const payload = { type: "todo.state", tasks, view, stats: stats(tasks) };
     try {
       palette?.postMessage(payload);
     } catch {
@@ -295,6 +473,32 @@ export function activate(ctx) {
         case "todo.cmd":
           await run(msg.cmd);
           break;
+        case "todo.hints":
+          // 타이핑 중 속성 자동 채우기. 파서를 UI에 복제하지 않으려고 왕복시킨다 —
+          // 같은 프로세스 IPC라 수 ms면 끝난다.
+          palette.postMessage({
+            type: "todo.hints.result",
+            seq: msg.seq,
+            hints: parseHints(msg.text),
+          });
+          break;
+        case "todo.compose": {
+          // 등록 = AI 정리 한 번 + 저장. 모델이 죽거나 느려도 사용자가 친 내용은 반드시
+          // 등록된다 — 여기서 입력을 잃으면 그게 최악이다.
+          let merged;
+          try {
+            const reply = await ctx.host.llm.generate(
+              composePrompt(msg.draft, new Date().toISOString().slice(0, 10)),
+              45,
+            );
+            merged = mergeComposed(msg.draft, parseDraftJson(reply)[0]);
+          } catch {
+            merged = mergeComposed(msg.draft, null);
+          }
+          if (merged.title) await run({ type: "add", task: merged });
+          palette.postMessage({ type: "todo.composed", task: merged });
+          break;
+        }
         case "todo.extract": {
           try {
             const result =

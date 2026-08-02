@@ -8,11 +8,19 @@
   :root {
     --bg: #f6f7f9; --card: #fff; --fg: #1b1d21; --muted: #6b7280;
     --line: #e3e6ea; --accent: #3b82f6; --danger: #dc2626; --warn: #b45309;
+    --hi-bg: #fee2e2; --hi-fg: #b91c1c;
+    --md-bg: #fef3c7; --md-fg: #92400e;
+    --lo-bg: #e0e7ff; --lo-fg: #3730a3;
+    --track: #e5e7eb;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #16181d; --card: #1f2229; --fg: #e8eaed; --muted: #9aa1ac;
       --line: #2c3038; --accent: #60a5fa; --danger: #f87171; --warn: #fbbf24;
+      --hi-bg: #4a1d1d; --hi-fg: #fca5a5;
+      --md-bg: #46330f; --md-fg: #fcd34d;
+      --lo-bg: #262a52; --lo-fg: #a5b4fc;
+      --track: #2c3038;
     }
   }
   * { box-sizing: border-box; }
@@ -20,14 +28,6 @@
     margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.5 system-ui, sans-serif;
     height: 100vh; display: flex; flex-direction: column;
   }
-  header {
-    display: flex; gap: 6px; align-items: center; padding: 10px 12px;
-    border-bottom: 1px solid var(--line); flex: none;
-  }
-  /* 좁은 창에서도 한 줄을 유지한다 — 입력이 먼저 줄고 버튼은 안 줄어든다. */
-  header #new { flex: 1; min-width: 90px; }
-  header button, header #new-due { flex: none; }
-  .label { color: var(--muted); font-size: 12px; margin-left: 4px; }
   button {
     font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 5px 10px; cursor: pointer;
@@ -36,78 +36,136 @@
   button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.link { border: none; background: none; color: var(--muted); padding: 4px 6px; }
   button.link:hover { color: var(--danger); }
-  .grow { flex: 1; }
-  input, textarea {
+  input, textarea, select {
     font: inherit; color: var(--fg); background: var(--card);
     border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
   }
+  .grow { flex: 1; }
+
+  /* ── 제목표시줄 ──
+   * 팔레트 창은 프레임리스(palette-window.ts: frame ?? false)라 OS 타이틀바가 없다.
+   * 직접 그리고, 빈 영역은 창 이동용 드래그 영역으로 준다. */
+  .titlebar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 0 6px 0 13px; height: 38px; background: var(--card);
+    border-bottom: 1px solid var(--line); -webkit-app-region: drag; user-select: none;
+  }
+  .titlebar .name { font-size: 13px; font-weight: 600; letter-spacing: -.2px; }
+  .titlebar .dot { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); flex: none; }
+  .titlebar .nums { display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; overflow: hidden; }
+  .titlebar .close {
+    -webkit-app-region: no-drag; border: none; background: none; color: var(--muted);
+    font-size: 15px; line-height: 1; padding: 7px 10px; border-radius: 7px; flex: none;
+  }
+  .titlebar .close:hover { background: var(--hi-bg); color: var(--hi-fg); }
+  .statusbar { flex: none; background: var(--card); }
+  .stat { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+  .stat b { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  .stat.alert b { color: var(--danger); }
+  .stat.today b { color: var(--warn); }
+  .bar { height: 3px; background: var(--track); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+  .sep { width: 1px; align-self: stretch; background: var(--line); }
+
+  /* ── 툴바 ── */
+  header { display: flex; gap: 6px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); flex: none; }
+  header .label { color: var(--muted); font-size: 12px; margin-left: 4px; }
   main { flex: 1; overflow: auto; padding: 12px; }
 
-  /* 리스트 */
-  .row {
-    display: flex; gap: 9px; align-items: center; background: var(--card);
-    border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin-bottom: 6px;
-  }
-  .row .title { flex: 1; }
+  /* ── 중요도 칩 ── */
+  .pri { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
+  .pri.high { background: var(--hi-bg); color: var(--hi-fg); }
+  .pri.medium { background: var(--md-bg); color: var(--md-fg); }
+  .pri.low { background: var(--lo-bg); color: var(--lo-fg); }
+
+  /* ── 리스트 ── */
+  .row { display: flex; gap: 9px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin-bottom: 6px; }
+  .row .title { flex: 1; cursor: pointer; }
   .row.done .title { text-decoration: line-through; color: var(--muted); }
   .due { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .due.over { color: var(--danger); font-weight: 600; }
   .due.today { color: var(--warn); font-weight: 600; }
+  .tag { font-size: 11px; color: var(--muted); }
 
-  /* 칸반 */
+  /* ── 칸반 ── */
   .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: start; }
-  .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 140px; }
-  .col h2 { margin: 2px 4px 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 150px; }
+  .col h2 { margin: 2px 4px 8px; font-size: 12px; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; }
   .col.over { border-color: var(--accent); }
-  .chip {
-    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
-    padding: 7px 9px; margin-bottom: 6px; cursor: grab;
-  }
+  .chip { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; cursor: grab; }
   .chip:active { cursor: grabbing; }
+  .chip .top { display: flex; gap: 6px; align-items: center; margin-bottom: 3px; }
+  .chip .meta { display: flex; gap: 8px; align-items: center; }
 
-  /* 초안 확인 */
-  .sheet {
-    position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
-    display: flex; align-items: center; justify-content: center; padding: 20px;
-  }
-  .sheet > div {
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    width: 100%; max-width: 560px; max-height: 100%; display: flex; flex-direction: column;
-  }
+  /* ── 시트(노션 페이지 / 초안 확인) ── */
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
+  .sheet > div { background: var(--card); border: 1px solid var(--line); border-radius: 12px; width: 100%; max-width: 580px; max-height: 100%; display: flex; flex-direction: column; }
   .sheet h2 { margin: 0; padding: 12px 14px; font-size: 14px; border-bottom: 1px solid var(--line); }
-  .sheet .body { padding: 12px 14px; overflow: auto; flex: 1; }
-  .sheet .foot { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .sheet .body { padding: 14px 18px; overflow: auto; flex: 1; }
+  .sheet .foot { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+
+  /* 노션 페이지 느낌: 제목은 큼직한 무테, 속성은 라벨/값 2열 */
+  .page-title { width: 100%; border: none; background: none; font-size: 22px; font-weight: 700; padding: 2px 0 8px; }
+  .page-title:focus { outline: none; }
+  .props { display: grid; grid-template-columns: 74px 1fr; gap: 7px 10px; align-items: center; padding: 6px 0 12px; border-bottom: 1px solid var(--line); }
+  .props .k { color: var(--muted); font-size: 12px; }
+  .props .v { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .props .v input[type=text] { flex: 1; min-width: 90px; }
+  .seg button { padding: 3px 9px; font-size: 12px; }
+  .seg button.on.high { background: var(--hi-bg); color: var(--hi-fg); border-color: var(--hi-fg); }
+  .seg button.on.medium { background: var(--md-bg); color: var(--md-fg); border-color: var(--md-fg); }
+  .seg button.on.low { background: var(--lo-bg); color: var(--lo-fg); border-color: var(--lo-fg); }
+  .seg button.on.none { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .page-body { width: 100%; min-height: 150px; border: none; background: none; resize: vertical; padding: 12px 0 0; line-height: 1.65; }
+  .page-body:focus { outline: none; }
+  .hintline { color: var(--muted); font-size: 11px; min-height: 16px; }
+  .hintline b { color: var(--accent); }
+
   .draft { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
   .draft input[type=text] { flex: 1; }
-  .empty { color: var(--muted); text-align: center; padding: 32px 12px; }
+  .empty { color: var(--muted); text-align: center; padding: 34px 12px; }
   pre { white-space: pre-wrap; word-break: break-all; color: var(--muted); font-size: 12px; }
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--track); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -1px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
+<div class="titlebar">
+  <span class="dot"></span>
+  <span class="name">할 일</span>
+  <span class="grow"></span>
+  <div class="nums" id="stats"></div>
+  <button class="close" id="close" title="닫기">✕</button>
+</div>
+<div class="bar"><i id="bar" style="width:0%"></i></div>
+
 <header>
   <button id="v-list" class="active">리스트</button>
   <button id="v-kanban">칸반</button>
+  <button id="add" class="active">+ 새 할 일</button>
   <span class="grow"></span>
-  <input id="new" type="text" placeholder="할 일 입력 후 Enter" />
-  <input id="new-due" type="datetime-local" title="마감(선택)" />
   <span class="label">추출</span>
   <button id="x-clip" title="복사한 글에서 할 일 뽑기">붙여넣기</button>
   <button id="x-img" title="이미지에서 할 일 뽑기">이미지</button>
   <button id="x-mail" title="최근 메일에서 할 일 뽑기">메일</button>
 </header>
+
 <main id="main"><div class="empty">불러오는 중…</div></main>
 <input id="file" type="file" accept="image/*" hidden />
 
 <script>
 const bridge = window.dapPalette;
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
 let tasks = [];
 let view = "list";
+let stats = null;
 
 const COLUMNS = [{ id: "todo", label: "할 일" }, { id: "doing", label: "진행 중" }, { id: "done", label: "완료" }];
-
+const PRI_LABEL = { high: "높음", medium: "보통", low: "낮음" };
 const send = (cmd) => bridge.postMessage({ type: "todo.cmd", cmd });
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function dueInfo(task) {
   if (!task.due) return { text: "", cls: "" };
@@ -116,18 +174,34 @@ function dueInfo(task) {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   const hasTime = task.due.includes("T");
-  const text = sameDay
-    ? (hasTime ? `오늘 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : "오늘")
-    : `${d.getMonth() + 1}/${d.getDate()}`;
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const text = sameDay ? (hasTime ? `오늘 ${hm}` : "오늘") : `${d.getMonth() + 1}/${d.getDate()}`;
   const cls = task.status !== "done" && d < now && !sameDay ? "over" : sameDay ? "today" : "";
   return { text, cls };
 }
+const priChip = (p) => (p ? `<span class="pri ${p}">${PRI_LABEL[p]}</span>` : "");
 
+/* ── 상태표시줄 ── */
+function renderStats() {
+  if (!stats) return;
+  const cell = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
+  // 제목표시줄 안이라 폭이 귀하다 — 전체 건수는 아래 진행 막대가 이미 말해준다.
+  const parts = [cell(stats.todo, "할 일"), cell(stats.doing, "진행"), cell(stats.done, "완료")];
+  const alerts = [];
+  if (stats.overdue) alerts.push(cell(stats.overdue, "지난 마감", "alert"));
+  if (stats.today) alerts.push(cell(stats.today, "오늘 마감", "today"));
+  if (stats.high) alerts.push(`<div class="stat"><span class="pri high">중요 ${stats.high}</span></div>`);
+  $("stats").innerHTML = parts.join("") + (alerts.length ? `<div class="sep"></div>${alerts.join("")}` : "");
+  $("bar").style.width = `${stats.percent}%`;
+}
+
+/* ── 목록 / 칸반 ── */
 function render() {
+  renderStats();
   const main = $("main");
   main.innerHTML = "";
   if (!tasks.length) {
-    main.innerHTML = '<div class="empty">아직 할 일이 없어요.<br />위에 입력하거나 붙여넣기·이미지·메일에서 뽑아보세요.</div>';
+    main.innerHTML = '<div class="empty">아직 할 일이 없어요.<br /><b>+ 새 할 일</b>을 누르거나 붙여넣기·이미지·메일에서 뽑아보세요.</div>';
     return;
   }
   view === "kanban" ? renderKanban(main) : renderList(main);
@@ -141,10 +215,13 @@ function renderList(main) {
     row.className = "row" + (t.status === "done" ? " done" : "");
     row.innerHTML =
       `<input type="checkbox" ${t.status === "done" ? "checked" : ""} />` +
+      priChip(t.priority) +
       `<span class="title">${esc(t.title)}</span>` +
+      (t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : "") +
       (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "") +
       `<button class="link" title="삭제">✕</button>`;
     row.querySelector("input").addEventListener("change", () => send({ type: "toggle", id: t.id }));
+    row.querySelector(".title").addEventListener("click", () => openPage(t));
     row.querySelector("button").addEventListener("click", () => send({ type: "delete", id: t.id }));
     main.append(row);
   }
@@ -153,17 +230,28 @@ function renderList(main) {
 function renderKanban(main) {
   const board = document.createElement("div");
   board.className = "board";
+  // 노션 보드처럼 중요도 높은 것이 위로.
+  const rank = { high: 0, medium: 1, low: 2, "": 3 };
   for (const col of COLUMNS) {
     const box = document.createElement("section");
     box.className = "col";
-    box.innerHTML = `<h2>${col.label}</h2>`;
-    for (const t of tasks.filter((x) => x.status === col.id).sort((a, b) => a.order - b.order)) {
+    const items = tasks.filter((x) => x.status === col.id)
+      .sort((a, b) => rank[a.priority ?? ""] - rank[b.priority ?? ""] || a.order - b.order);
+    box.innerHTML = `<h2><span>${col.label}</span><span>${items.length}</span></h2>`;
+    for (const t of items) {
+      const info = dueInfo(t);
       const chip = document.createElement("div");
       chip.className = "chip";
       chip.draggable = true;
-      const info = dueInfo(t);
-      chip.innerHTML = `${esc(t.title)}${info.text ? ` <span class="due ${info.cls}">${info.text}</span>` : ""}`;
+      chip.innerHTML =
+        (t.priority ? `<div class="top">${priChip(t.priority)}</div>` : "") +
+        `<div>${esc(t.title)}</div>` +
+        (info.text || t.tags?.length
+          ? `<div class="meta">${info.text ? `<span class="due ${info.cls}">${info.text}</span>` : ""}` +
+            `${t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : ""}</div>`
+          : "");
       chip.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.id));
+      chip.addEventListener("dblclick", () => openPage(t));
       box.append(chip);
     }
     box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("over"); });
@@ -179,36 +267,161 @@ function renderKanban(main) {
   main.append(board);
 }
 
-/* 초안 확인 — 자동 등록은 없다. 항상 사용자가 훑고 [등록]을 눌러야 들어간다. */
+/* ── 노션 페이지형 입력창 ──
+ * 본문을 치면 마감·중요도·태그가 위 속성칸에 자동으로 채워진다(로컬 파싱, 즉시).
+ * 사용자가 직접 건드린 속성은 자동 채우기가 다시 덮어쓰지 않는다.
+ * [등록]을 누르면 AI가 한 번 검토·정리해서 넣는다.
+ */
+let hintSeq = 0;
+let pendingHints = null;
+
+function openPage(existing) {
+  const editing = !!existing;
+  const draft = {
+    title: existing?.title ?? "",
+    notes: existing?.notes ?? "",
+    due: existing?.due ?? "",
+    priority: existing?.priority ?? "",
+    tags: [...(existing?.tags ?? [])],
+  };
+  const touched = editing ? { due: true, priority: true, tags: true } : {};
+
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.innerHTML = `<div>
+    <div class="body">
+      <input class="page-title" id="p-title" placeholder="제목 없음" />
+      <div class="props">
+        <div class="k">중요도</div>
+        <div class="v seg" id="p-pri">
+          <button data-p="" class="none">없음</button>
+          <button data-p="high" class="high">높음</button>
+          <button data-p="medium" class="medium">보통</button>
+          <button data-p="low" class="low">낮음</button>
+        </div>
+        <div class="k">마감</div><div class="v"><input type="datetime-local" id="p-due" /></div>
+        <div class="k">태그</div><div class="v"><input type="text" id="p-tags" placeholder="쉼표로 구분" /></div>
+      </div>
+      <textarea class="page-body" id="p-body" placeholder="내용을 적어보세요. 예: 내일 오후 3시까지 급하게 보고서 정리 #업무"></textarea>
+    </div>
+    <div class="foot">
+      <span class="hintline" id="p-hint"></span>
+      <span class="grow"></span>
+      <button id="p-cancel">취소</button>
+      <button id="p-ok" class="active">${editing ? "저장" : "등록"}</button>
+    </div>
+  </div>`;
+  document.body.append(sheet);
+
+  const el = (id) => sheet.querySelector("#" + id);
+  el("p-title").value = draft.title;
+  el("p-body").value = draft.notes;
+  el("p-due").value = draft.due && draft.due.includes("T") ? draft.due : "";
+  el("p-tags").value = draft.tags.join(", ");
+  const paintPri = () => [...el("p-pri").children].forEach((b) => b.classList.toggle("on", b.dataset.p === draft.priority));
+  paintPri();
+
+  el("p-pri").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    draft.priority = b.dataset.p;
+    touched.priority = true;
+    paintPri();
+  });
+  el("p-due").addEventListener("input", () => { touched.due = true; });
+  el("p-tags").addEventListener("input", () => { touched.tags = true; });
+
+  // 타이핑 → 로컬 파서 왕복(디바운스) → 안 건드린 속성만 채운다
+  let timer = null;
+  const scheduleHints = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const seq = ++hintSeq;
+      pendingHints = { seq, apply: (h) => {
+        const got = [];
+        if (h.due && !touched.due) {
+          el("p-due").value = h.due.includes("T") ? h.due : `${h.due}T09:00`;
+          got.push(`마감 <b>${h.due.replace("T", " ")}</b>`);
+        }
+        if (h.priority && !touched.priority) {
+          draft.priority = h.priority;
+          paintPri();
+          got.push(`중요도 <b>${PRI_LABEL[h.priority]}</b>`);
+        }
+        if (h.tags?.length && !touched.tags) {
+          el("p-tags").value = h.tags.join(", ");
+          got.push(`태그 <b>${h.tags.join(", ")}</b>`);
+        }
+        el("p-hint").innerHTML = got.length ? "자동 인식: " + got.join(" · ") : "";
+      } };
+      bridge.postMessage({ type: "todo.hints", seq, text: `${el("p-title").value}\n${el("p-body").value}` });
+    }, 250);
+  };
+  el("p-body").addEventListener("input", scheduleHints);
+  el("p-title").addEventListener("input", scheduleHints);
+
+  const close = () => { clearTimeout(timer); pendingHints = null; sheet.remove(); };
+  el("p-cancel").addEventListener("click", close);
+  sheet.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+
+  el("p-ok").addEventListener("click", () => {
+    const payload = {
+      title: el("p-title").value.trim(),
+      notes: el("p-body").value.trim(),
+      due: el("p-due").value,
+      priority: draft.priority,
+      tags: el("p-tags").value.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean),
+    };
+    if (!payload.title && !payload.notes) return close();
+    if (editing) {
+      send({ type: "edit", id: existing.id, ...payload });
+      return close();
+    }
+    // 등록 = AI가 한 번 검토·정리해서 넣는다. 실패해도 입력은 그대로 등록된다.
+    el("p-ok").disabled = true;
+    el("p-cancel").disabled = true;
+    el("p-hint").innerHTML = '<span class="spin"></span> AI가 내용을 정리하는 중…';
+    pendingCompose = close;
+    bridge.postMessage({ type: "todo.compose", draft: payload });
+  });
+
+  setTimeout(() => el("p-title").focus(), 30);
+}
+
+let pendingCompose = null;
+
+/* ── 초안 확인(붙여넣기·이미지·메일 추출) ── */
 function showDrafts(drafts, raw) {
   const sheet = document.createElement("div");
   sheet.className = "sheet";
-  const rows = drafts
-    .map(
-      (d, i) =>
-        `<div class="draft" data-i="${i}">` +
-        `<input type="checkbox" checked />` +
-        `<input type="text" value="${esc(d.title)}" />` +
-        `<input type="datetime-local" value="${d.due && d.due.includes("T") ? esc(d.due) : ""}" />` +
-        `</div>`,
-    )
-    .join("");
+  const rows = drafts.map((d, i) =>
+    `<div class="draft" data-i="${i}">` +
+    `<input type="checkbox" checked />` +
+    `<input type="text" value="${esc(d.title)}" />` +
+    (d.priority ? `<span class="pri ${d.priority}">${PRI_LABEL[d.priority]}</span>` : "") +
+    `<input type="datetime-local" value="${d.due && d.due.includes("T") ? esc(d.due) : ""}" />` +
+    `</div>`).join("");
   sheet.innerHTML =
     `<div><h2>${drafts.length ? `찾은 할 일 ${drafts.length}건 — 확인 후 등록` : "할 일을 찾지 못했어요"}</h2>` +
     `<div class="body">${rows || `<pre>${esc(raw || "")}</pre>`}</div>` +
-    `<div class="foot"><button id="d-cancel">닫기</button>` +
-    (drafts.length ? `<button id="d-ok" class="active">등록</button>` : "") +
-    `</div></div>`;
+    `<div class="foot"><span class="grow"></span><button id="d-cancel">닫기</button>` +
+    (drafts.length ? `<button id="d-ok" class="active">등록</button>` : "") + `</div></div>`;
   document.body.append(sheet);
   sheet.querySelector("#d-cancel").addEventListener("click", () => sheet.remove());
   sheet.querySelector("#d-ok")?.addEventListener("click", () => {
     const picked = [...sheet.querySelectorAll(".draft")]
       .filter((row) => row.querySelector('input[type=checkbox]').checked)
-      .map((row) => ({
-        title: row.querySelector('input[type=text]').value,
-        due: row.querySelector('input[type="datetime-local"]').value,
-        source: "extract",
-      }))
+      .map((row) => {
+        const i = +row.dataset.i;
+        return {
+          title: row.querySelector('input[type=text]').value,
+          due: row.querySelector('input[type="datetime-local"]').value,
+          priority: drafts[i].priority ?? "",
+          tags: drafts[i].tags ?? [],
+          notes: drafts[i].notes ?? "",
+          source: "extract",
+        };
+      })
       .filter((t) => t.title.trim());
     if (picked.length) send({ type: "addMany", tasks: picked });
     sheet.remove();
@@ -218,23 +431,16 @@ function showDrafts(drafts, raw) {
 function busy(label) {
   const sheet = document.createElement("div");
   sheet.className = "sheet";
-  sheet.innerHTML = `<div><div class="body"><div class="empty">${label}</div></div></div>`;
+  sheet.innerHTML = `<div><div class="body"><div class="empty"><span class="spin"></span> ${label}</div></div></div>`;
   document.body.append(sheet);
   return sheet;
 }
 
-/* 이벤트 */
+/* ── 이벤트 ── */
 $("v-list").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "list" }));
 $("v-kanban").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "kanban" }));
-
-$("new").addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || e.isComposing) return; // IME 조합 중 Enter는 확정이지 제출이 아니다
-  const title = $("new").value.trim();
-  if (!title) return;
-  send({ type: "add", task: { title, due: $("new-due").value } });
-  $("new").value = "";
-  $("new-due").value = "";
-});
+$("add").addEventListener("click", () => openPage(null));
+$("close").addEventListener("click", () => bridge.close());
 
 let pending = null;
 const startExtract = (payload, label) => {
@@ -257,9 +463,17 @@ bridge.onMessage((msg) => {
   if (msg?.type === "todo.state") {
     tasks = msg.tasks ?? [];
     view = msg.view ?? "list";
+    stats = msg.stats ?? null;
     $("v-list").classList.toggle("active", view === "list");
     $("v-kanban").classList.toggle("active", view === "kanban");
     render();
+  }
+  if (msg?.type === "todo.hints.result" && pendingHints && msg.seq === pendingHints.seq) {
+    pendingHints.apply(msg.hints ?? {});
+  }
+  if (msg?.type === "todo.composed") {
+    pendingCompose?.();
+    pendingCompose = null;
   }
   if (msg?.type === "todo.drafts") {
     pending?.remove();

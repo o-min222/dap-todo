@@ -103,6 +103,126 @@ assert.deepEqual(plugin.parseDraftJson('[{"notes":"제목 없음"}]'), [], "제�
 assert.ok(plugin.parseDraftJson(`[${Array.from({ length: 40 }, (_, i) => `{"title":"t${i}"}`).join(",")}]`).length <= 20);
 assert.match(plugin.extractionPrompt("메모", "2026-08-02"), /2026-08-02/, "프롬프트에 오늘 날짜가 들어가야 상대 날짜를 푼다");
 
+/* ── 중요도 ── */
+assert.equal(plugin.normalizeTask({ title: "x", priority: "high" }, now).priority, "high");
+assert.equal(plugin.normalizeTask({ title: "x", priority: "urgent" }, now).priority, "", "모르는 중요도는 버린다");
+assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 '없음'");
+{
+  const one = plugin.applyCommand([], { type: "add", task: { title: "a", priority: "low" } }, now);
+  assert.equal(plugin.applyCommand(one, { type: "edit", id: one[0].id, priority: "high" }, now)[0].priority, "high");
+  // 빈 문자열은 "없음으로 되돌리기"라는 유효한 값이다 — includes 검사에 걸려 무시되면 안 된다.
+  assert.equal(plugin.applyCommand(one, { type: "edit", id: one[0].id, priority: "" }, now)[0].priority, "");
+  assert.equal(plugin.applyCommand(one, { type: "edit", id: one[0].id, priority: "bogus" }, now)[0].priority, "low");
+  assert.deepEqual(
+    plugin.applyCommand(one, { type: "edit", id: one[0].id, tags: ["업무", " 급함 ", ""] }, now)[0].tags,
+    ["업무", "급함"],
+  );
+}
+
+/* ── 상태표시줄 수치 ── */
+{
+  const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
+  const bag = [
+    t({ title: "a", due: "2026-08-02T14:00", priority: "high" }),
+    t({ title: "b", status: "doing" }),
+    t({ title: "c", status: "done" }),
+    t({ title: "d", due: "2026-07-20" }),
+  ];
+  const s = plugin.stats(bag, now);
+  assert.equal(s.total, 4);
+  assert.equal(s.todo, 2);
+  assert.equal(s.doing, 1);
+  assert.equal(s.done, 1);
+  assert.equal(s.today, 1);
+  assert.equal(s.overdue, 1);
+  assert.equal(s.high, 1);
+  assert.equal(s.percent, 25);
+  const empty = plugin.stats([], now);
+  assert.equal(empty.percent, 0, "0건일 때 0으로 나누면 안 된다");
+  assert.equal(plugin.stats([t({ status: "done" })], now).percent, 100);
+  // 완료된 항목은 지난 마감/중요 집계에 들어가면 안 된다.
+  assert.equal(plugin.stats([t({ due: "2026-07-20", status: "done", priority: "high" })], now).overdue, 0);
+  assert.equal(plugin.stats([t({ due: "2026-07-20", status: "done", priority: "high" })], now).high, 0);
+}
+
+/* ── 로컬 힌트 파서 (노션 페이지 자동 채우기) ── */
+{
+  const base = new Date(2026, 7, 2, 9, 0); // 2026-08-02 (일요일) 09:00
+  const h = (s) => plugin.parseHints(s, base);
+
+  assert.deepEqual(h(""), {}, "빈 입력은 아무것도 채우지 않는다");
+  assert.deepEqual(h("그냥 메모"), {}, "단서가 없으면 키 자체를 안 만든다");
+
+  assert.equal(h("오늘까지 정리").due, "2026-08-02");
+  assert.equal(h("내일 보고서").due, "2026-08-03");
+  assert.equal(h("모레 회의").due, "2026-08-04");
+  assert.equal(h("8/5 마감").due, "2026-08-05");
+  assert.equal(h("8월 15일 휴가").due, "2026-08-15");
+  assert.equal(h("2026-09-01 시작").due, "2026-09-01");
+  // 8/2(일) 기준: 이번주 월요일 = 7/27, 다음주 월요일 = 8/3
+  assert.equal(h("이번주 월요일").due, "2026-07-27");
+  assert.equal(h("다음주 월요일").due, "2026-08-03");
+  assert.equal(h("담주 금요일").due, "2026-08-07");
+  assert.equal(h("화요일까지").due, "2026-08-04", "수식어 없는 요일은 다음 도래일");
+
+  assert.equal(h("내일 14:30 미팅").due, "2026-08-03T14:30");
+  assert.equal(h("내일 오후 3시").due, "2026-08-03T15:00");
+  assert.equal(h("내일 오전 9시 반").due, "2026-08-03T09:30");
+  assert.equal(h("내일 저녁 7시").due, "2026-08-03T19:00");
+  assert.equal(h("14시에 회의").due, "2026-08-02T14:00", "날짜 없이 시각만 = 오늘");
+  assert.equal(h("오후 12시").due, "2026-08-02T12:00", "오후 12시는 24시가 아니다");
+  assert.equal(h("오전 12시").due, "2026-08-02T00:00", "오전 12시는 자정이다");
+  assert.equal(h("99시").due, undefined, "말이 안 되는 시각은 무시");
+
+  assert.equal(h("이거 긴급해").priority, "high");
+  assert.equal(h("중요한 일").priority, "high");
+  assert.equal(h("ASAP 처리").priority, "high");
+  assert.equal(h("나중에 해도 됨").priority, "low");
+  assert.equal(h("보통 정도").priority, "medium");
+  assert.equal(h("평범한 메모").priority, undefined);
+
+  assert.deepEqual(h("정리 #업무 #보고서").tags, ["업무", "보고서"]);
+  assert.deepEqual(h("#업무 #업무").tags, ["업무"], "중복 태그는 합친다");
+  assert.equal(h("색상은 #ff0000").tags[0], "ff0000");
+
+  const full = h("내일 오후 3시까지 급하게 보고서 정리 #업무");
+  assert.equal(full.due, "2026-08-03T15:00");
+  assert.equal(full.priority, "high");
+  assert.deepEqual(full.tags, ["업무"]);
+}
+
+/* ── 등록 시 AI 정리 병합 ── */
+{
+  const user = { title: "보고서", notes: "내일까지 급함", due: "2026-08-03T15:00", priority: "high", tags: ["업무"] };
+  const ai = { title: "보고서 정리", notes: "3분기 실적 정리", due: "2026-08-10", priority: "low", tags: ["기타"] };
+  const merged = plugin.mergeComposed(user, ai);
+  assert.equal(merged.title, "보고서 정리", "제목은 AI 정리본을 쓴다");
+  assert.equal(merged.notes, "3분기 실적 정리");
+  assert.equal(merged.due, "2026-08-03T15:00", "사용자가 정한 마감을 AI가 덮으면 안 된다");
+  assert.equal(merged.priority, "high", "사용자가 정한 중요도를 AI가 덮으면 안 된다");
+  assert.deepEqual(merged.tags, ["업무"]);
+
+  // 빈 칸은 AI가 채운다
+  const sparse = plugin.mergeComposed({ title: "메모", notes: "내일 회의" }, ai);
+  assert.equal(sparse.due, "2026-08-10");
+  assert.equal(sparse.priority, "low");
+  assert.deepEqual(sparse.tags, ["기타"]);
+
+  // AI가 죽어도 사용자가 친 내용은 그대로 살아남아야 한다 (등록 실패 = 최악)
+  const fallback = plugin.mergeComposed(user, null);
+  assert.equal(fallback.title, "보고서");
+  assert.equal(fallback.notes, "내일까지 급함");
+  assert.equal(fallback.due, "2026-08-03T15:00");
+  assert.equal(fallback.priority, "high");
+  assert.ok(plugin.normalizeTask(fallback, now), "병합 결과는 그대로 저장 가능해야 한다");
+  assert.match(plugin.composePrompt(user, "2026-08-02"), /2026-08-02/);
+  assert.match(plugin.composePrompt(user, "2026-08-02"), /보고서/);
+}
+
+// 추출 파서도 중요도를 읽어야 한다
+assert.equal(plugin.parseDraftJson('[{"title":"x","priority":"high"}]')[0].priority, "high");
+assert.equal(plugin.parseDraftJson('[{"title":"x","priority":"매우높음"}]')[0].priority, "", "모르는 값은 버린다");
+
 /* ── AI 요약 / 브리핑 ── */
 const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
 assert.equal(plugin.summarizeForAi([], now), "", "할 일이 없으면 컨텍스트를 낭비하지 않는다");
