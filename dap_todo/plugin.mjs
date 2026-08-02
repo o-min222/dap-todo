@@ -247,6 +247,39 @@ export function parseHints(text, now = new Date()) {
 }
 
 /**
+ * 이번 주에 실제로 손대야 하는 것들 — 칸반 위에 먼저 보여줄 목록.
+ *
+ * 기준: 살아있는 항목(완료·보류 제외) 중 **이번 주 안에 마감**이거나 **중요도 높음**.
+ * 지난 마감이 맨 위다(이미 늦은 게 제일 급하다). 그다음 마감 빠른 순, 마감 없는 중요 건이 뒤.
+ * 칸반이 주인공이므로 목록은 짧게 자른다.
+ */
+export function weekFocus(tasks, now = new Date(), limit = 4) {
+  const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
+  const live = (tasks ?? []).filter((t) => isOpen(t) && !isParked(t));
+  const picked = live.filter((t) => {
+    const d = dueDate(t);
+    return (d && d <= weekEnd) || t.priority === "high";
+  });
+  const rank = (t) => {
+    const d = dueDate(t);
+    if (d && d < now && !isSameDay(d, now)) return 0;   // 지난 마감
+    if (d) return 1;                                     // 이번 주 마감
+    return 2;                                            // 마감 없는 중요 건
+  };
+  const sorted = picked.sort((a, b) => {
+    const r = rank(a) - rank(b);
+    if (r !== 0) return r;
+    const da = dueDate(a);
+    const db = dueDate(b);
+    if (da && db) return da - db;
+    if (da) return -1;
+    if (db) return 1;
+    return a.order - b.order;
+  });
+  return { items: sorted.slice(0, limit), total: sorted.length };
+}
+
+/**
  * 상단 상태표시줄 수치. UI에 같은 로직을 복제하지 않으려고 여기서 계산해 내려보낸다
  * (팔레트는 별도 문서라 import를 못 한다).
  */
@@ -442,7 +475,6 @@ export function activate(ctx) {
   let notified = {};
   let palette = null;
   let trayPanel = null;
-  let view = "list";
 
   const load = async () => {
     tasks = (await storage.getJson("tasks")) ?? [];
@@ -470,7 +502,7 @@ export function activate(ctx) {
 
   /** 살아있는 표면 전부에 현재 상태를 밀어준다. */
   const push = () => {
-    const payload = { type: "todo.state", tasks, view, stats: stats(tasks) };
+    const payload = { type: "todo.state", tasks, stats: stats(tasks), focus: weekFocus(tasks) };
     try {
       palette?.postMessage(payload);
     } catch {
@@ -571,10 +603,6 @@ export function activate(ctx) {
     palette.onMessage(async (msg) => {
       switch (msg?.type) {
         case "todo.ready":
-          push();
-          break;
-        case "todo.view":
-          view = msg.view === "kanban" ? "kanban" : "list";
           push();
           break;
         case "todo.cmd":

@@ -69,10 +69,26 @@
   .bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
   .sep { width: 1px; align-self: stretch; background: var(--line); }
 
-  /* ── 툴바 ── */
-  header { display: flex; gap: 6px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); flex: none; }
-  header .label { color: var(--muted); font-size: 12px; margin-left: 4px; }
   main { flex: 1; overflow: auto; padding: 12px; }
+
+  /* ── 이번 주 처리할 건 ──
+     칸반이 주인공이라 위쪽은 짧게 — 지금 손대야 하는 것만 몇 줄. */
+  .focus { margin-bottom: 12px; }
+  .focus h2 {
+    display: flex; align-items: center; gap: 6px; margin: 0 0 6px 2px;
+    font-size: 12px; color: var(--muted); font-weight: 600;
+  }
+  .focus h2 .n { color: var(--fg); }
+  .focus .f {
+    display: flex; gap: 8px; align-items: center; background: var(--card);
+    border: 1px solid var(--line); border-left: 3px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; margin-bottom: 4px; cursor: pointer;
+  }
+  .focus .f:hover { border-color: var(--accent); }
+  .focus .f.over { border-left-color: var(--danger); }
+  .focus .f.today { border-left-color: var(--warn); }
+  .focus .f .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus .more { font-size: 11px; color: var(--muted); padding-left: 4px; }
 
   /* ── 중요도 칩 ── */
   .pri { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
@@ -160,11 +176,6 @@
 </div>
 <div class="bar"><i id="bar" style="width:0%"></i></div>
 
-<header>
-  <button id="v-list" class="active">리스트</button>
-  <button id="v-kanban">칸반</button>
-</header>
-
 <main id="main"><div class="empty">불러오는 중…</div></main>
 <input id="file" type="file" accept="image/*" hidden />
 
@@ -174,7 +185,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 let tasks = [];
-let view = "list";
+let focus = null;
 let stats = null;
 
 const COLUMNS = [
@@ -220,7 +231,35 @@ function render() {
   renderStats();
   const main = $("main");
   main.innerHTML = "";
-  view === "kanban" ? renderKanban(main) : renderList(main);
+  renderFocus(main);
+  renderKanban(main);
+}
+
+/** 이번 주에 손대야 하는 것들 — 칸반 위에 먼저. 누르면 그 항목이 열린다. */
+function renderFocus(main) {
+  if (!focus?.items?.length) return;
+  const box = document.createElement("section");
+  box.className = "focus";
+  box.innerHTML = `<h2>이번 주 처리할 건 <span class="n">${focus.total}</span></h2>`;
+  for (const t of focus.items) {
+    const info = dueInfo(t);
+    const row = document.createElement("div");
+    row.className = "f" + (info.cls ? ` ${info.cls}` : "");
+    row.innerHTML =
+      priChip(t.priority) +
+      `<span class="t">${esc(t.title)}</span>` +
+      (t.notes?.trim() ? `<span class="note">📝</span>` : "") +
+      (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "");
+    row.addEventListener("click", () => openPage(t));
+    box.append(row);
+  }
+  if (focus.total > focus.items.length) {
+    const more = document.createElement("div");
+    more.className = "more";
+    more.textContent = `+${focus.total - focus.items.length}건 더 — 아래 칸반에서 확인`;
+    box.append(more);
+  }
+  main.append(box);
 }
 
 /** 목록/컬럼 안에 놓는 인라인 추가 버튼. status를 넘겨 그 컬럼으로 바로 들어가게 한다. */
@@ -232,38 +271,13 @@ function addRow(label, status) {
   return b;
 }
 
-function renderList(main) {
+function renderKanban(main) {
   if (!tasks.length) {
     const hint = document.createElement("div");
     hint.className = "empty";
-    hint.innerHTML = "아직 할 일이 없어요.<br />아래에서 바로 추가하거나, 펫에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
+    hint.innerHTML = "아직 할 일이 없어요.<br />아래 컬럼에서 바로 추가하거나, 펫에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
     main.append(hint);
   }
-  // 활동 중 → 보류 → 완료 순. 세워둔 일이 목록 위를 차지하지 않게 한다.
-  const bucket = (t) => (t.status === "done" ? 2 : t.status === "hold" ? 1 : 0);
-  const sorted = [...tasks].sort((a, b) => bucket(a) - bucket(b) || a.order - b.order);
-  for (const t of sorted) {
-    const info = dueInfo(t);
-    const row = document.createElement("div");
-    row.className = "row" + (t.status === "done" ? " done" : "") + (t.status === "hold" ? " held" : "");
-    row.innerHTML =
-      `<input type="checkbox" ${t.status === "done" ? "checked" : ""} />` +
-      (t.status === "hold" ? '<span class="pri hold">보류</span>' : "") +
-      priChip(t.priority) +
-      `<span class="title">${esc(t.title)}</span>` +
-      (t.notes?.trim() ? `<span class="note" title="${esc(t.notes.trim().slice(0, 300))}">📝</span>` : "") +
-      (t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : "") +
-      (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "") +
-      `<button class="link" title="삭제">✕</button>`;
-    row.querySelector("input").addEventListener("change", () => send({ type: "toggle", id: t.id }));
-    row.querySelector(".title").addEventListener("click", () => openPage(t));
-    row.querySelector("button").addEventListener("click", () => send({ type: "delete", id: t.id }));
-    main.append(row);
-  }
-  main.append(addRow("할 일 추가", "todo"));
-}
-
-function renderKanban(main) {
   const board = document.createElement("div");
   board.className = "board";
   // 노션 보드처럼 중요도 높은 것이 위로.
@@ -554,8 +568,6 @@ function showDrafts(drafts, raw) {
 }
 
 /* ── 이벤트 ── */
-$("v-list").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "list" }));
-$("v-kanban").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "kanban" }));
 $("close").addEventListener("click", () => bridge.close());
 
 
@@ -573,10 +585,8 @@ $("file").addEventListener("change", () => {
 bridge.onMessage((msg) => {
   if (msg?.type === "todo.state") {
     tasks = msg.tasks ?? [];
-    view = msg.view ?? "list";
+    focus = msg.focus ?? null;
     stats = msg.stats ?? null;
-    $("v-list").classList.toggle("active", view === "list");
-    $("v-kanban").classList.toggle("active", view === "kanban");
     render();
   }
   if (msg?.type === "todo.hints.result" && pendingHints && msg.seq === pendingHints.seq) {

@@ -119,6 +119,38 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   );
 }
 
+/* ── 이번 주 처리할 건 (칸반 위 목록) ── */
+{
+  const base = new Date(2026, 7, 2, 9, 0);   // 2026-08-02 (일)
+  const t = (over) => plugin.normalizeTask({ title: "t", ...over }, base);
+  const bag = [
+    t({ title: "지난주정산", due: "2026-07-30" }),
+    t({ title: "오늘보고서", due: "2026-08-02T14:00" }),
+    t({ title: "수요회의", due: "2026-08-05T10:00" }),
+    t({ title: "중요한데마감없음", priority: "high" }),
+    t({ title: "먼일", due: "2026-09-20" }),
+    t({ title: "그냥할일" }),
+    t({ title: "보류건", status: "hold", due: "2026-08-03" }),
+    t({ title: "끝난건", status: "done", due: "2026-08-03" }),
+  ];
+  const f = plugin.weekFocus(bag, base, 10);
+  const titles = f.items.map((x) => x.title);
+  // 지난 마감이 맨 위 → 마감 빠른 순 → 마감 없는 중요 건
+  assert.deepEqual(titles, ["지난주정산", "오늘보고서", "수요회의", "중요한데마감없음"]);
+  assert.equal(f.total, 4);
+  assert.ok(!titles.includes("먼일"), "이번 주 밖은 안 올린다");
+  assert.ok(!titles.includes("그냥할일"), "마감도 중요도도 없으면 칸반에만 둔다");
+  assert.ok(!titles.includes("보류건"), "보류는 여기서도 안 꺼낸다");
+  assert.ok(!titles.includes("끝난건"), "완료는 제외");
+
+  // 칸반이 주인공이라 목록은 짧게 자르고 남은 수를 알려준다
+  const capped = plugin.weekFocus(bag, base, 2);
+  assert.equal(capped.items.length, 2);
+  assert.equal(capped.total, 4);
+  assert.deepEqual(plugin.weekFocus([], base).items, []);
+  assert.equal(plugin.weekFocus(null, base).total, 0);
+}
+
 /* ── 상태표시줄 수치 ── */
 {
   const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
