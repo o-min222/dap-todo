@@ -103,6 +103,11 @@
   .chip:active { cursor: grabbing; }
   .chip .top { display: flex; gap: 6px; align-items: center; margin-bottom: 3px; }
   .chip .meta { display: flex; gap: 8px; align-items: center; }
+  .chip .note {
+    color: var(--muted); font-size: 11px; margin-top: 3px; padding-left: 6px;
+    border-left: 2px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row .note { color: var(--muted); font-size: 11px; }
 
   /* ── 시트(노션 페이지 / 초안 확인) ── */
   .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
@@ -246,6 +251,7 @@ function renderList(main) {
       (t.status === "hold" ? '<span class="pri hold">보류</span>' : "") +
       priChip(t.priority) +
       `<span class="title">${esc(t.title)}</span>` +
+      (t.notes?.trim() ? `<span class="note" title="${esc(t.notes.trim().slice(0, 300))}">📝</span>` : "") +
       (t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : "") +
       (info.text ? `<span class="due ${info.cls}">${info.text}</span>` : "") +
       `<button class="link" title="삭제">✕</button>`;
@@ -273,15 +279,22 @@ function renderKanban(main) {
       const chip = document.createElement("div");
       chip.className = "chip";
       chip.draggable = true;
+      const note = t.notes?.trim();
       chip.innerHTML =
         (t.priority ? `<div class="top">${priChip(t.priority)}</div>` : "") +
         `<div>${esc(t.title)}</div>` +
+        // 노트가 있으면 첫 줄을 미리 보여준다 — 안에 뭐가 있는지 열기 전에 알 수 있게.
+        (note ? `<div class="note">${esc(note.split("\n")[0].slice(0, 60))}</div>` : "") +
         (info.text || t.tags?.length
           ? `<div class="meta">${info.text ? `<span class="due ${info.cls}">${info.text}</span>` : ""}` +
             `${t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : ""}</div>`
           : "");
       chip.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", t.id));
-      chip.addEventListener("dblclick", () => openPage(t));
+      // 한 번 클릭으로 연다. 드래그와 안 겹치도록 실제로 끌린 경우에는 열지 않는다.
+      let dragged = false;
+      chip.addEventListener("dragstart", () => { dragged = true; });
+      chip.addEventListener("dragend", () => { setTimeout(() => { dragged = false; }, 0); });
+      chip.addEventListener("click", () => { if (!dragged) openPage(t); });
       box.append(chip);
     }
     box.append(addRow("추가", col.id));

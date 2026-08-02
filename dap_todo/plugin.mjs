@@ -272,6 +272,45 @@ export function stats(tasks, now = new Date()) {
   };
 }
 
+const STATUS_LABEL = { todo: "할 일", doing: "진행 중", hold: "보류", done: "완료" };
+const PRIORITY_LABEL = { high: "높음", medium: "보통", low: "낮음" };
+
+/**
+ * 제목으로 할 일을 찾는다. 정확 일치 → 시작 일치 → 부분 일치 순.
+ * 완료/보류보다 살아있는 항목을 먼저 집는다(같은 제목이 여러 번 나오는 흔한 경우).
+ */
+export function findTask(tasks, query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return null;
+  const rank = (t) => (t.status === "done" ? 2 : t.status === "hold" ? 1 : 0);
+  const pick = (pred) =>
+    (tasks ?? []).filter((t) => pred(String(t.title ?? "").toLowerCase())).sort((a, b) => rank(a) - rank(b))[0];
+  return pick((s) => s === q) ?? pick((s) => s.startsWith(q)) ?? pick((s) => s.includes(q)) ?? null;
+}
+
+/**
+ * 채팅에서 한 건의 전체 내용을 읽어줄 때 쓰는 텍스트. aiContext(300자)에는 못 담는 노트·자료를
+ * 여기서 펼친다 — 요약은 상시, 상세는 요청 시라는 분담이다.
+ */
+export function detailText(task) {
+  if (!task) return "";
+  const lines = [`■ ${task.title}`];
+  const meta = [STATUS_LABEL[task.status] ?? task.status];
+  if (task.priority) meta.push(`중요도 ${PRIORITY_LABEL[task.priority]}`);
+  if (task.due) meta.push(`마감 ${task.due.replace("T", " ")}`);
+  if (task.tags?.length) meta.push(task.tags.map((x) => `#${x}`).join(" "));
+  lines.push(meta.join(" · "));
+  if (task.notes?.trim()) lines.push("", task.notes.trim().slice(0, 1500));
+  return lines.join("\n");
+}
+
+/** 캘린더 등 다른 플러그인에 흘려보낼 마감 목록. 노트 같은 본문은 싣지 않는다. */
+export function deadlinePayload(tasks) {
+  return (tasks ?? [])
+    .filter((t) => isOpen(t) && !isParked(t) && t.due)
+    .map((t) => ({ id: t.id, title: t.title, due: t.due, priority: t.priority ?? "" }));
+}
+
 /** 매 대화 턴에 프롬프트로 들어가는 한 줄. 예산이 빡빡하므로 목록 덤프 금지. */
 export function summarizeForAi(tasks, now = new Date()) {
   const open = (tasks ?? []).filter(isOpen);
@@ -413,6 +452,20 @@ export function activate(ctx) {
   const save = async () => {
     await storage.setJson("tasks", tasks);
     push();
+    publishDeadlines();
+  };
+
+  /**
+   * 마감 목록을 펫 이벤트 버스로 브로드캐스트한다 — 캘린더 플러그인이 날짜별 "할 일 N건"을
+   * 그리는 데 쓴다. 플러그인끼리 직접 부르는 API는 없고, 이 버스가 유일한 정식 채널이다.
+   * 브로드캐스트라 제목·마감 정도만 싣는다(노트는 절대 싣지 않는다).
+   */
+  const publishDeadlines = () => {
+    try {
+      ctx.host.events?.emit?.("todo.deadlines", { tasks: deadlinePayload(tasks) });
+    } catch {
+      /* 버스가 없어도 플러그인은 계속 돈다 */
+    }
   };
 
   /** 살아있는 표면 전부에 현재 상태를 밀어준다. */
@@ -583,6 +636,31 @@ export function activate(ctx) {
     id: "summary",
     callback: () => summarizeForAi(tasks) || "아직 등록한 할 일이 없어.",
   });
+  /**
+   * 한 건의 전체 내용(노트 포함)을 채팅으로 읽어준다. aiContext는 300자라 요약만 담기므로,
+   * "그 할 일 자세히 알려줘" 류는 이 커맨드로 온다. LLM도 [[run_plugin]]으로 부를 수 있다.
+   */
+  const DETAIL_TRIGGERS = ["할 일 상세", "할일 상세", "할 일 자세히", "할일 자세히"];
+  ctx.actions.registerAction({
+    id: "detail",
+    callback: (payload) => {
+      const q = stripTrigger(payload?.text ?? "", DETAIL_TRIGGERS);
+      if (!q) {
+        const open = tasks.filter((t) => isOpen(t)).slice(0, 8);
+        return open.length
+          ? `어떤 걸 볼까? ${open.map((t) => `"${t.title}"`).join(", ")}`
+          : "아직 등록한 할 일이 없어.";
+      }
+      const hit = findTask(tasks, q);
+      return hit ? detailText(hit) : `"${q}" 로 찾은 할 일이 없어.`;
+    },
+  });
+  ctx.commands.addCommand({
+    id: "todo_detail",
+    title: "할 일 상세",
+    matchers: [{ type: "keyword", patterns: DETAIL_TRIGGERS, priority: 25 }],
+    backend: { type: "builtin", handler: "detail" },
+  });
 
   /**
    * 채팅/음성으로 등록. 음성은 DAP이 받아쓰기해 채팅 발화로 넣어주므로 이 한 경로로 둘 다 된다.
@@ -677,10 +755,23 @@ export function activate(ctx) {
     })();
   }, TICK_MS);
 
-  void load().then(push);
+  // 캘린더가 먼저 뜨면 아직 보낼 게 없으므로, 요청을 받으면 다시 쏴준다(기동 순서 무관).
+  const offBus = ctx.host.events?.on?.((event) => {
+    if (event === "todo.deadlines.request") publishDeadlines();
+  });
+
+  void load().then(() => {
+    push();
+    publishDeadlines();
+  });
 
   return () => {
     clearInterval(timer);
+    try {
+      offBus?.();
+    } catch {
+      /* 이미 해제됐으면 무시 */
+    }
     try {
       palette?.close?.();
     } catch {

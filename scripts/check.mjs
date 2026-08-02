@@ -244,6 +244,42 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.match(plugin.composePrompt(user, "2026-08-02"), /보고서/);
 }
 
+/* ── 상세 조회 / 다른 플러그인에 흘려보낼 마감 ── */
+{
+  const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
+  const bag = [
+    t({ title: "보고서", notes: "3분기 실적\n담당: 김대리", due: "2026-08-03T15:00", priority: "high", tags: ["업무"] }),
+    t({ title: "보고서 리뷰", status: "done" }),
+    t({ title: "장보기" }),
+  ];
+  assert.equal(plugin.findTask(bag, "보고서").title, "보고서", "정확 일치 우선");
+  assert.equal(plugin.findTask(bag, "보고").title, "보고서", "부분 일치도 찾는다");
+  assert.equal(plugin.findTask(bag, "없는거"), null);
+  assert.equal(plugin.findTask(bag, ""), null);
+  assert.equal(plugin.findTask([], "x"), null);
+  // 같은 말에 걸리면 살아있는 항목을 먼저 집는다
+  assert.equal(plugin.findTask([t({ title: "회의", status: "done" }), t({ title: "회의" })], "회의").status, "todo");
+
+  const text = plugin.detailText(plugin.findTask(bag, "보고서"));
+  assert.match(text, /보고서/);
+  assert.match(text, /높음/);
+  assert.match(text, /2026-08-03 15:00/);
+  assert.match(text, /#업무/);
+  assert.match(text, /김대리/, "aiContext 에 못 싣는 노트를 상세에서는 펼친다");
+  assert.equal(plugin.detailText(null), "");
+  assert.doesNotMatch(plugin.detailText(t({ title: "빈노트" })), /\n\n/, "노트가 없으면 빈 줄을 붙이지 않는다");
+
+  // 캘린더로 흘려보내는 마감 — 마감 있는 미완만, 노트는 절대 싣지 않는다.
+  const payload = plugin.deadlinePayload(bag);
+  assert.deepEqual(payload.map((p) => p.title), ["보고서"]);
+  assert.equal(payload[0].notes, undefined, "브로드캐스트에 노트가 새면 안 된다");
+  assert.ok(payload[0].due && payload[0].id);
+  assert.deepEqual(plugin.deadlinePayload([t({ title: "보류", status: "hold", due: "2026-08-03" })]), [], "보류는 캘린더에도 안 띄운다");
+  assert.deepEqual(plugin.deadlinePayload([t({ title: "완료", status: "done", due: "2026-08-03" })]), []);
+  assert.deepEqual(plugin.deadlinePayload([t({ title: "마감없음" })]), []);
+  assert.deepEqual(plugin.deadlinePayload(null), []);
+}
+
 /* ── 채팅/음성 발화에서 본문 뽑기 ── */
 {
   const T = ["할 일 추가", "할일 추가", "할 일 등록", "투두 추가"];
