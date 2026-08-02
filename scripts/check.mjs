@@ -119,6 +119,50 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   );
 }
 
+/* ── DAP으로 처리한 작업 기록 ── */
+{
+  const base = new Date(2026, 7, 2, 9, 0);
+  let list = plugin.applyCommand([], { type: "add", task: { title: "보고서" } }, base);
+  const id = list[0].id;
+  assert.deepEqual(list[0].activity, [], "새 항목은 빈 기록으로 시작한다");
+
+  list = plugin.applyCommand(list, { type: "log", id, text: "초안 정리했어 https://docs.example/a", by: "dap" }, base);
+  assert.equal(list[0].activity.length, 1);
+  assert.deepEqual(list[0].activity[0].links, ["https://docs.example/a"]);
+  assert.equal(list[0].activity[0].by, "dap");
+  assert.ok(list[0].activity[0].at, "언제 남겼는지가 있어야 한다");
+
+  // 덮어쓰지 않고 쌓인다 — 기록이니까
+  list = plugin.applyCommand(list, { type: "log", id, text: "리뷰 반영 C:\\work\\report.docx" }, base);
+  assert.equal(list[0].activity.length, 2);
+  assert.deepEqual(list[0].activity[1].files, ["C:\\work\\report.docx"]);
+  assert.equal(list[0].activity[1].links, undefined, "링크가 없으면 키를 안 만든다");
+
+  assert.equal(plugin.applyCommand(list, { type: "log", id, text: "  " }, base)[0].activity.length, 2, "빈 기록은 무시");
+  assert.equal(plugin.applyCommand(list, { type: "log", id: "없는id", text: "x" }, base)[0].activity.length, 2);
+
+  // 첨부 추출
+  const att = plugin.parseAttachments("정리본 https://a.io/x, 그리고 C:\\docs\\plan.md 와 /home/u/notes.txt");
+  assert.deepEqual(att.links, ["https://a.io/x"]);
+  assert.ok(att.files.includes("C:\\docs\\plan.md"));
+  assert.ok(att.files.some((f) => f.includes("notes.txt")));
+  assert.deepEqual(plugin.parseAttachments("아무것도 없음"), { links: [], files: [] });
+  assert.deepEqual(plugin.parseAttachments(null), { links: [], files: [] });
+  // URL 안의 슬래시를 파일 경로로 오인하면 안 된다
+  assert.deepEqual(plugin.parseAttachments("https://a.io/deep/path/file.pdf").files, []);
+
+  // "대상 : 내용" 가르기
+  assert.deepEqual(plugin.splitLogInput("보고서 : 초안 끝"), { query: "보고서", content: "초안 끝" });
+  assert.deepEqual(plugin.splitLogInput("보고서: https://a.io/x"), { query: "보고서", content: "https://a.io/x" });
+  assert.equal(plugin.splitLogInput("보고서").content, "", "구분자가 없으면 내용은 비운다");
+  assert.equal(plugin.splitLogInput("").query, "");
+
+  // 상세 조회에 기록이 같이 나와야 "어디까지 했지?" 에 답할 수 있다
+  const text = plugin.detailText(list[0]);
+  assert.match(text, /작업 기록 2건/);
+  assert.match(text, /초안 정리했어/);
+}
+
 /* ── 이번 주 처리할 건 (칸반 위 목록) ── */
 {
   const base = new Date(2026, 7, 2, 9, 0);   // 2026-08-02 (일)

@@ -58,7 +58,35 @@ export function normalizeTask(raw, now = new Date(), id = null) {
     order: Number.isFinite(raw?.order) ? raw.order : now.getTime(),
     createdAt: new Date(now).toISOString(),
     source: typeof raw?.source === "string" ? raw.source.slice(0, 24) : "manual",
+    // DAP으로 처리한 작업이 쌓이는 자리 (링크·파일·작성한 내용).
+    activity: Array.isArray(raw?.activity) ? raw.activity.slice(-50) : [],
   };
+}
+
+/**
+ * 작업 기록 본문에서 링크와 파일 경로를 건져낸다. 본문은 그대로 두고 따로 목록을 만든다 —
+ * 카드에서 "무엇이 붙어 있는지" 를 열지 않고도 알 수 있어야 한다.
+ */
+export function parseAttachments(text) {
+  const src = String(text ?? "");
+  const links = [...new Set((src.match(/https?:\/\/[^\s<>"')]+/g) ?? []).map((u) => u.replace(/[.,;]$/, "")))];
+  // 윈도우(C:\...) · POSIX(/x/y) 경로. 링크 안의 슬래시와 겹치지 않게 URL을 먼저 지운다.
+  const withoutLinks = src.replace(/https?:\/\/[^\s<>"')]+/g, " ");
+  const files = [...new Set(withoutLinks.match(/(?:[A-Za-z]:\\[^\s"'<>|]+|(?:^|\s)\/[^\s"'<>|]{2,})/g) ?? [])]
+    .map((f) => f.trim())
+    .filter((f) => /\.[A-Za-z0-9]{1,8}$/.test(f));   // 확장자가 있어야 파일로 본다
+  return { links: links.slice(0, 10), files: files.slice(0, 10) };
+}
+
+/**
+ * "보고서 : 초안 정리했고 https://… 링크" → 대상과 내용으로 가른다.
+ * 구분자가 없으면 전체를 대상으로 보고 내용은 비운다(호출자가 안내 문구를 낸다).
+ */
+export function splitLogInput(text) {
+  const src = String(text ?? "").trim();
+  const m = /^(.{1,80}?)\s*[:：|]\s*([\s\S]+)$/.exec(src);
+  if (m) return { query: m[1].trim(), content: m[2].trim() };
+  return { query: src, content: "" };
 }
 
 /**
@@ -97,6 +125,22 @@ export function applyCommand(tasks, cmd, now = new Date()) {
       }
       if (!Object.keys(patch).length) return list;
       return list.map((t) => (t.id === cmd.id ? { ...t, ...patch } : t));
+    }
+    case "log": {
+      // DAP으로 처리한 작업을 항목에 붙인다. 덮어쓰지 않고 쌓는다 — 기록이니까.
+      const text = String(cmd.text ?? "").trim().slice(0, 4000);
+      if (!text) return list;
+      const { links, files } = parseAttachments(text);
+      const entry = {
+        at: new Date(now).toISOString(),
+        text,
+        ...(links.length ? { links } : {}),
+        ...(files.length ? { files } : {}),
+        ...(cmd.by ? { by: String(cmd.by).slice(0, 24) } : {}),
+      };
+      return list.map((t) =>
+        t.id === cmd.id ? { ...t, activity: [...(t.activity ?? []), entry].slice(-50) } : t,
+      );
     }
     case "delete":
       return list.filter((t) => t.id !== cmd.id);
@@ -334,6 +378,15 @@ export function detailText(task) {
   if (task.tags?.length) meta.push(task.tags.map((x) => `#${x}`).join(" "));
   lines.push(meta.join(" · "));
   if (task.notes?.trim()) lines.push("", task.notes.trim().slice(0, 1500));
+  // DAP으로 처리한 기록도 같이 읽어준다 — "그 건 어디까지 했지?" 에 답할 수 있어야 한다.
+  const acts = (task.activity ?? []).slice(-5);
+  if (acts.length) {
+    lines.push("", `[작업 기록 ${task.activity.length}건]`);
+    for (const a of acts) {
+      const when = String(a.at ?? "").slice(5, 16).replace("T", " ");
+      lines.push(`- ${when} ${String(a.text ?? "").slice(0, 200)}`);
+    }
+  }
   return lines.join("\n");
 }
 
@@ -473,12 +526,14 @@ export function activate(ctx) {
   const storage = ctx.host.storage;
   let tasks = [];
   let notified = {};
+  let focusCollapsed = false;
   let palette = null;
   let trayPanel = null;
 
   const load = async () => {
     tasks = (await storage.getJson("tasks")) ?? [];
     notified = (await storage.getJson("notified")) ?? {};
+    focusCollapsed = (await storage.getJson("focusCollapsed")) === true;
     if (!Array.isArray(tasks)) tasks = [];
   };
   const save = async () => {
@@ -502,7 +557,7 @@ export function activate(ctx) {
 
   /** 살아있는 표면 전부에 현재 상태를 밀어준다. */
   const push = () => {
-    const payload = { type: "todo.state", tasks, stats: stats(tasks), focus: weekFocus(tasks) };
+    const payload = { type: "todo.state", tasks, stats: stats(tasks), focus: weekFocus(tasks), focusCollapsed };
     try {
       palette?.postMessage(payload);
     } catch {
@@ -605,6 +660,11 @@ export function activate(ctx) {
         case "todo.ready":
           push();
           break;
+        case "todo.focusToggle":
+          focusCollapsed = !!msg.collapsed;
+          await storage.setJson("focusCollapsed", focusCollapsed);
+          push();
+          break;
         case "todo.cmd":
           await run(msg.cmd);
           break;
@@ -683,6 +743,35 @@ export function activate(ctx) {
       return hit ? detailText(hit) : `"${q}" 로 찾은 할 일이 없어.`;
     },
   });
+  /**
+   * DAP으로 처리한 작업을 해당 할 일에 남긴다. LLM 이 작업을 끝낸 뒤
+   * [[run_plugin: 할 일 기록 || 보고서 : 초안 정리했고 https://… ]] 로 부르는 것을 상정한다.
+   * 링크·파일 경로는 본문에서 자동으로 뽑아 따로 붙는다.
+   */
+  const LOG_TRIGGERS = ["할 일 기록", "할일 기록", "작업 기록", "할 일에 기록"];
+  ctx.actions.registerAction({
+    id: "log",
+    callback: async (payload) => {
+      const { query, content } = splitLogInput(stripTrigger(payload?.text ?? "", LOG_TRIGGERS));
+      if (!query) return '어느 할 일에 남길까? 예: "할 일 기록 보고서 : 초안 정리했어 https://…"';
+      const hit = findTask(tasks, query);
+      if (!hit) return `"${query}" 로 찾은 할 일이 없어.`;
+      if (!content) return `"${hit.title}" 에 뭘 남길까? 콜론 뒤에 내용을 적어줘.`;
+      await run({ type: "log", id: hit.id, text: content, by: "dap" });
+      const { links, files } = parseAttachments(content);
+      const extra = [links.length ? `링크 ${links.length}` : "", files.length ? `파일 ${files.length}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      return `"${hit.title}" 에 기록했어${extra ? ` (${extra})` : ""}.`;
+    },
+  });
+  ctx.commands.addCommand({
+    id: "todo_log",
+    title: "할 일 기록",
+    matchers: [{ type: "keyword", patterns: LOG_TRIGGERS, priority: 25 }],
+    backend: { type: "builtin", handler: "log" },
+  });
+
   ctx.commands.addCommand({
     id: "todo_detail",
     title: "할 일 상세",
