@@ -122,6 +122,15 @@
   .hintline { color: var(--muted); font-size: 11px; min-height: 16px; }
   .hintline b { color: var(--accent); }
 
+  /* 인라인 추가 — 목록/컬럼 안에서 바로 열리는 진입점. 버튼을 따로 찾아갈 필요가 없다. */
+  .addrow {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+    color: var(--muted); background: none; border: 1px dashed var(--line); border-radius: 9px;
+    padding: 8px 10px;
+  }
+  .addrow:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+  .col .addrow { padding: 6px 9px; font-size: 12px; }
+
   .draft { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
   .draft input[type=text] { flex: 1; }
   .empty { color: var(--muted); text-align: center; padding: 34px 12px; }
@@ -143,12 +152,6 @@
 <header>
   <button id="v-list" class="active">리스트</button>
   <button id="v-kanban">칸반</button>
-  <button id="add" class="active">+ 새 할 일</button>
-  <span class="grow"></span>
-  <span class="label">추출</span>
-  <button id="x-clip" title="복사한 글에서 할 일 뽑기">붙여넣기</button>
-  <button id="x-img" title="이미지에서 할 일 뽑기">이미지</button>
-  <button id="x-mail" title="최근 메일에서 할 일 뽑기">메일</button>
 </header>
 
 <main id="main"><div class="empty">불러오는 중…</div></main>
@@ -200,14 +203,25 @@ function render() {
   renderStats();
   const main = $("main");
   main.innerHTML = "";
-  if (!tasks.length) {
-    main.innerHTML = '<div class="empty">아직 할 일이 없어요.<br /><b>+ 새 할 일</b>을 누르거나 붙여넣기·이미지·메일에서 뽑아보세요.</div>';
-    return;
-  }
   view === "kanban" ? renderKanban(main) : renderList(main);
 }
 
+/** 목록/컬럼 안에 놓는 인라인 추가 버튼. status를 넘겨 그 컬럼으로 바로 들어가게 한다. */
+function addRow(label, status) {
+  const b = document.createElement("button");
+  b.className = "addrow";
+  b.innerHTML = `<span>+</span><span>${label}</span>`;
+  b.addEventListener("click", () => openPage(null, status));
+  return b;
+}
+
 function renderList(main) {
+  if (!tasks.length) {
+    const hint = document.createElement("div");
+    hint.className = "empty";
+    hint.innerHTML = "아직 할 일이 없어요.<br />아래에서 바로 추가하거나, 펫에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
+    main.append(hint);
+  }
   const sorted = [...tasks].sort((a, b) => (a.status === "done") - (b.status === "done") || a.order - b.order);
   for (const t of sorted) {
     const info = dueInfo(t);
@@ -225,6 +239,7 @@ function renderList(main) {
     row.querySelector("button").addEventListener("click", () => send({ type: "delete", id: t.id }));
     main.append(row);
   }
+  main.append(addRow("할 일 추가", "todo"));
 }
 
 function renderKanban(main) {
@@ -254,6 +269,7 @@ function renderKanban(main) {
       chip.addEventListener("dblclick", () => openPage(t));
       box.append(chip);
     }
+    box.append(addRow("추가", col.id));
     box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("over"); });
     box.addEventListener("dragleave", () => box.classList.remove("over"));
     box.addEventListener("drop", (e) => {
@@ -275,7 +291,7 @@ function renderKanban(main) {
 let hintSeq = 0;
 let pendingHints = null;
 
-function openPage(existing) {
+function openPage(existing, status) {
   const editing = !!existing;
   const draft = {
     title: existing?.title ?? "",
@@ -302,7 +318,12 @@ function openPage(existing) {
         <div class="k">마감</div><div class="v"><input type="datetime-local" id="p-due" /></div>
         <div class="k">태그</div><div class="v"><input type="text" id="p-tags" placeholder="쉼표로 구분" /></div>
       </div>
-      <textarea class="page-body" id="p-body" placeholder="내용을 적어보세요. 예: 내일 오후 3시까지 급하게 보고서 정리 #업무"></textarea>
+      <textarea class="page-body" id="p-body" placeholder="내용을 적어보세요. 예: 내일 오후 3시까지 급하게 보고서 정리 #업무&#10;&#10;메일이나 메모를 그대로 붙여넣어도 돼요. 이미지는 붙여넣거나 끌어다 놓으세요."></textarea>
+      <div class="hintline" id="p-src">
+        붙여넣기·이미지 끌어놓기 지원 ·
+        <button class="link" id="p-img">이미지 열기</button> ·
+        <button class="link" id="p-mail">메일에서 가져오기</button>
+      </div>
     </div>
     <div class="foot">
       <span class="hintline" id="p-hint"></span>
@@ -360,7 +381,56 @@ function openPage(existing) {
   el("p-body").addEventListener("input", scheduleHints);
   el("p-title").addEventListener("input", scheduleHints);
 
-  const close = () => { clearTimeout(timer); pendingHints = null; sheet.remove(); };
+  /* 이 페이지 안에서 뽑아오기 — 사용자가 입력 위치를 옮겨 다니지 않게 한 곳에 모은다.
+     결과가 1건이면 이 페이지 칸을 채우고, 여러 건이면 확인 카드로 넘긴다. */
+  const busyMsg = (label) => { el("p-src").innerHTML = `<span class="spin"></span> ${label}`; };
+  pageFill = (drafts, raw) => {
+    el("p-src").innerHTML = '붙여넣기·이미지 끌어놓기 지원 · <button class="link" id="p-img">이미지 열기</button> · <button class="link" id="p-mail">메일에서 가져오기</button>';
+    wireSources();
+    if (!drafts.length) { el("p-hint").textContent = raw ? "내용을 읽지 못했어요." : ""; return false; }
+    if (drafts.length > 1) return true;            // 확인 카드로 넘긴다
+    const d = drafts[0];
+    if (!el("p-title").value.trim()) el("p-title").value = d.title ?? "";
+    if (d.notes) el("p-body").value = [el("p-body").value, d.notes].filter(Boolean).join("\n");
+    if (d.due && !touched.due) el("p-due").value = d.due.includes("T") ? d.due : `${d.due}T09:00`;
+    if (d.priority && !touched.priority) { draft.priority = d.priority; paintPri(); }
+    if (d.tags?.length && !touched.tags) el("p-tags").value = d.tags.join(", ");
+    scheduleHints();
+    return false;
+  };
+  const grabImage = (dataUrl) => {
+    busyMsg("이미지에서 내용을 읽는 중…");
+    bridge.postMessage({ type: "todo.extract", source: "image", dataUrl, into: "page" });
+  };
+  function wireSources() {
+    el("p-img").addEventListener("click", () => { imageTarget = grabImage; $("file").click(); });
+    el("p-mail").addEventListener("click", () => {
+      busyMsg("메일에서 할 일을 찾는 중…");
+      bridge.postMessage({ type: "todo.extract", source: "gmail", into: "page" });
+    });
+  }
+  wireSources();
+
+  const readImage = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => grabImage(reader.result);
+    reader.readAsDataURL(file);
+  };
+  el("p-body").addEventListener("paste", (e) => {
+    const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
+    if (!item) return;             // 텍스트 붙여넣기는 그냥 본문으로 들어간다
+    e.preventDefault();
+    readImage(item.getAsFile());
+  });
+  sheet.addEventListener("dragover", (e) => e.preventDefault());
+  sheet.addEventListener("drop", (e) => {
+    const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));
+    if (!file) return;
+    e.preventDefault();
+    readImage(file);
+  });
+
+  const close = () => { clearTimeout(timer); pendingHints = null; pageFill = null; sheet.remove(); };
   el("p-cancel").addEventListener("click", close);
   sheet.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
 
@@ -371,6 +441,7 @@ function openPage(existing) {
       due: el("p-due").value,
       priority: draft.priority,
       tags: el("p-tags").value.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean),
+      ...(status ? { status } : {}),   // 칸반 컬럼에서 열었으면 그 컬럼으로 들어간다
     };
     if (!payload.title && !payload.notes) return close();
     if (editing) {
@@ -389,6 +460,10 @@ function openPage(existing) {
 }
 
 let pendingCompose = null;
+/** 열려 있는 입력 페이지가 추출 결과를 받아 채우는 콜백. 페이지가 없으면 null. */
+let pageFill = null;
+/** 파일 선택 결과를 받을 대상 (페이지 안에서 연 경우). */
+let imageTarget = null;
 
 /* ── 초안 확인(붙여넣기·이미지·메일 추출) ── */
 function showDrafts(drafts, raw) {
@@ -428,35 +503,21 @@ function showDrafts(drafts, raw) {
   });
 }
 
-function busy(label) {
-  const sheet = document.createElement("div");
-  sheet.className = "sheet";
-  sheet.innerHTML = `<div><div class="body"><div class="empty"><span class="spin"></span> ${label}</div></div></div>`;
-  document.body.append(sheet);
-  return sheet;
-}
-
 /* ── 이벤트 ── */
 $("v-list").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "list" }));
 $("v-kanban").addEventListener("click", () => bridge.postMessage({ type: "todo.view", view: "kanban" }));
-$("add").addEventListener("click", () => openPage(null));
 $("close").addEventListener("click", () => bridge.close());
 
-let pending = null;
-const startExtract = (payload, label) => {
-  pending = busy(label);
-  bridge.postMessage({ type: "todo.extract", ...payload });
-};
-$("x-clip").addEventListener("click", () => startExtract({ source: "clipboard" }, "복사한 내용에서 할 일을 찾는 중…"));
-$("x-mail").addEventListener("click", () => startExtract({ source: "gmail" }, "메일에서 할 일을 찾는 중…"));
-$("x-img").addEventListener("click", () => $("file").click());
+
 $("file").addEventListener("change", () => {
   const file = $("file").files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => startExtract({ source: "image", dataUrl: reader.result }, "이미지에서 할 일을 찾는 중…");
-  reader.readAsDataURL(file);
   $("file").value = "";
+  if (!file || !imageTarget) return;
+  const reader = new FileReader();
+  const target = imageTarget;
+  imageTarget = null;
+  reader.onload = () => target(reader.result);
+  reader.readAsDataURL(file);
 });
 
 bridge.onMessage((msg) => {
@@ -476,9 +537,13 @@ bridge.onMessage((msg) => {
     pendingCompose = null;
   }
   if (msg?.type === "todo.drafts") {
-    pending?.remove();
-    pending = null;
-    showDrafts(msg.drafts ?? [], msg.raw);
+
+
+    const drafts = msg.drafts ?? [];
+    // 입력 페이지 안에서 부른 추출은 그 페이지를 채운다. 여러 건일 때만 확인 카드로 넘어간다.
+    if (msg.into === "page" && pageFill && !pageFill(drafts, msg.raw)) return;
+    if (pendingCompose) { pendingCompose(); pendingCompose = null; }
+    showDrafts(drafts, msg.raw);
   }
 });
 

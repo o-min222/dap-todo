@@ -219,6 +219,36 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.match(plugin.composePrompt(user, "2026-08-02"), /보고서/);
 }
 
+/* ── 채팅/음성 발화에서 본문 뽑기 ── */
+{
+  const T = ["할 일 추가", "할일 추가", "할 일 등록", "투두 추가"];
+  const s = (x) => plugin.stripTrigger(x, T);
+  assert.equal(s("할 일 추가 우유 사기"), "우유 사기");
+  assert.equal(s("할일 추가 내일 3시 보고서"), "내일 3시 보고서");
+  assert.equal(s("투두 추가: 장보기"), "장보기");
+  assert.equal(s("할 일 등록 회의 준비 해줘"), "회의 준비");
+  assert.equal(s("우유 사기 할 일 추가"), "우유 사기", "트리거가 뒤에 붙어도 떼어낸다");
+  assert.equal(s("할 일 추가"), "", "트리거만 말하면 본문이 없다");
+  assert.equal(s(""), "");
+  assert.equal(s(null), "");
+  // "할 일 추가"가 "할 일"에 먼저 걸려 "추가"가 남으면 안 된다(긴 트리거 우선).
+  assert.equal(plugin.stripTrigger("할 일 추가 우유", ["할 일", "할 일 추가"]), "우유");
+}
+
+// 등록 시 AI가 여러 건으로 쪼갤 수 있어야 한다(메일 한 통 → 할 일 N건).
+assert.equal(
+  plugin.parseDraftJson('[{"title":"a"},{"title":"b"},{"title":"c"}]').length,
+  3,
+  "compose 응답이 여러 건이면 확인 카드로 넘어간다",
+);
+// 칸반 컬럼에서 추가하면 그 상태로 들어가야 한다 (AI가 정할 값이 아니다).
+assert.equal(plugin.mergeComposed({ title: "x", status: "doing" }, { title: "y" }).status, "doing");
+assert.equal(plugin.mergeComposed({ title: "x" }, { title: "y" }).status, undefined);
+assert.equal(
+  plugin.applyCommand([], { type: "add", task: plugin.mergeComposed({ title: "x", status: "doing" }, null) }, now)[0].status,
+  "doing",
+);
+
 // 추출 파서도 중요도를 읽어야 한다
 assert.equal(plugin.parseDraftJson('[{"title":"x","priority":"high"}]')[0].priority, "high");
 assert.equal(plugin.parseDraftJson('[{"title":"x","priority":"매우높음"}]')[0].priority, "", "모르는 값은 버린다");

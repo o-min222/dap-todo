@@ -325,16 +325,18 @@ export function extractionPrompt(text, todayISO) {
 }
 
 /**
- * 등록 버튼을 누른 순간 AI에게 넘기는 프롬프트. 사용자가 막 적은 초안을 다듬는 용도라
- * parseDraftJson이 그대로 읽을 수 있게 "한 건짜리 배열"로 받는다.
+ * 등록 버튼을 누른 순간 AI에게 넘기는 프롬프트. parseDraftJson이 그대로 읽도록 배열로 받는다.
+ * 붙여넣은 메일 한 통에 할 일이 여러 개일 수 있으므로 **여러 건도 허용**한다 — 1건이면 바로
+ * 등록하고, 여러 건이면 확인 카드를 띄운다. 입력 지점을 하나로 모으기 위한 설계다.
  */
 export function composePrompt(draft, todayISO) {
   return [
-    "아래는 사용자가 방금 적은 할 일 메모야. 내용을 검토해서 깔끔한 할 일 한 건으로 정리해줘.",
+    "아래는 사용자가 방금 적은 메모야. 검토해서 깔끔한 할 일로 정리해줘.",
+    "- 할 일이 하나면 1건, 여러 개가 섞여 있으면 여러 건으로 나눠줘.",
     "- title: 한눈에 보이는 짧은 제목 (군더더기·날짜 표현 제거)",
     "- notes: 남길 만한 세부 내용만. 없으면 빈 문자열",
     "- due/priority/tags: 메모에서 읽어낼 수 있으면 채우고, 아니면 빈 값",
-    '형식(한 건짜리 배열): [{"title":"…","due":"YYYY-MM-DDTHH:mm","priority":"high|medium|low","notes":"…","tags":["…"]}]',
+    '형식: [{"title":"…","due":"YYYY-MM-DDTHH:mm","priority":"high|medium|low","notes":"…","tags":["…"]}]',
     `오늘은 ${todayISO} 야. "내일", "다음 주 화요일" 같은 표현은 실제 날짜로 바꿔.`,
     "설명이나 코드펜스 없이 JSON 배열만 출력해.",
     "",
@@ -342,6 +344,23 @@ export function composePrompt(draft, todayISO) {
     `제목: ${String(draft?.title ?? "").slice(0, 200)}`,
     `내용: ${String(draft?.notes ?? "").slice(0, 4000)}`,
   ].join("\n");
+}
+
+/**
+ * 채팅/음성 발화에서 명령 트리거를 떼어내 본문만 남긴다.
+ * "할 일 추가 우유 사기" → "우유 사기". 트리거만 말했으면 빈 문자열.
+ */
+export function stripTrigger(text, triggers) {
+  let out = String(text ?? "").trim();
+  // 긴 트리거부터 지워야 "할 일 추가"가 "할 일"에 먼저 걸려 "추가"가 남지 않는다.
+  for (const trigger of [...triggers].sort((a, b) => b.length - a.length)) {
+    const idx = out.indexOf(trigger);
+    if (idx >= 0) {
+      out = (out.slice(0, idx) + out.slice(idx + trigger.length)).trim();
+      break;
+    }
+  }
+  return out.replace(/^[,:\-–—]\s*/, "").replace(/\s*(해줘|해 줘|해라|하기|등록해|추가해)$/, "").trim();
 }
 
 /**
@@ -358,6 +377,8 @@ export function mergeComposed(userDraft, aiDraft) {
     due: String(u.due ?? "").trim() || a.due || "",
     priority: String(u.priority ?? "").trim() || a.priority || "",
     tags: (Array.isArray(u.tags) && u.tags.length ? u.tags : a.tags) ?? [],
+    // 칸반 컬럼에서 추가하면 그 컬럼으로 들어가야 한다 — AI가 정할 값이 아니다.
+    ...(u.status ? { status: u.status } : {}),
     source: "compose",
   };
 }
@@ -448,6 +469,27 @@ export function activate(ctx) {
     return { drafts: parseDraftJson(reply), raw: String(reply ?? "") };
   };
 
+  /**
+   * 등록 경로의 단일 지점: 팔레트의 [등록]도, 채팅/음성의 "할 일 추가"도 여기를 지난다.
+   * AI가 죽거나 느려도 사용자가 친 내용은 반드시 살아남는다 — 입력을 잃는 게 최악이다.
+   */
+  const composeDrafts = async (draft) => {
+    let parsed = [];
+    try {
+      const reply = await ctx.host.llm.generate(
+        composePrompt(draft, new Date().toISOString().slice(0, 10)),
+        45,
+      );
+      parsed = parseDraftJson(reply);
+    } catch {
+      parsed = [];
+    }
+    if (parsed.length > 1) {
+      return { many: true, drafts: parsed.map((d) => ({ ...d, source: "compose" })) };
+    }
+    return { many: false, task: mergeComposed(draft, parsed[0]) };
+  };
+
   const openPalette = async () => {
     if (palette && !palette.isDestroyed?.()) {
       palette.show?.();
@@ -483,20 +525,14 @@ export function activate(ctx) {
           });
           break;
         case "todo.compose": {
-          // 등록 = AI 정리 한 번 + 저장. 모델이 죽거나 느려도 사용자가 친 내용은 반드시
-          // 등록된다 — 여기서 입력을 잃으면 그게 최악이다.
-          let merged;
-          try {
-            const reply = await ctx.host.llm.generate(
-              composePrompt(msg.draft, new Date().toISOString().slice(0, 10)),
-              45,
-            );
-            merged = mergeComposed(msg.draft, parseDraftJson(reply)[0]);
-          } catch {
-            merged = mergeComposed(msg.draft, null);
+          const result = await composeDrafts(msg.draft);
+          if (result.many) {
+            // 메일 한 통에 할 일이 여럿이면 바로 넣지 않고 확인 카드로 넘긴다.
+            palette.postMessage({ type: "todo.drafts", drafts: result.drafts, raw: "" });
+          } else {
+            if (result.task.title) await run({ type: "add", task: result.task });
+            palette.postMessage({ type: "todo.composed", task: result.task });
           }
-          if (merged.title) await run({ type: "add", task: merged });
-          palette.postMessage({ type: "todo.composed", task: merged });
           break;
         }
         case "todo.extract": {
@@ -509,10 +545,13 @@ export function activate(ctx) {
                   : await extract(
                       msg.source === "clipboard" ? ctx.host.clipboard.readText() : msg.text,
                     );
-            palette.postMessage({ type: "todo.drafts", ...result });
+            // `into`는 그대로 되돌려준다 — 입력 페이지 안에서 부른 추출은 결과를 그 페이지에
+            // 채워야 하고, 툴바에서 부른 것은 확인 카드를 띄워야 한다.
+            palette.postMessage({ type: "todo.drafts", into: msg.into ?? "", ...result });
           } catch (e) {
             palette.postMessage({
               type: "todo.drafts",
+              into: msg.into ?? "",
               drafts: [],
               raw: `추출에 실패했어요: ${e?.message ?? e}`,
             });
@@ -531,6 +570,35 @@ export function activate(ctx) {
   ctx.actions.registerAction({
     id: "summary",
     callback: () => summarizeForAi(tasks) || "아직 등록한 할 일이 없어.",
+  });
+
+  /**
+   * 채팅/음성으로 등록. 음성은 DAP이 받아쓰기해 채팅 발화로 넣어주므로 이 한 경로로 둘 다 된다.
+   * 반환 문자열이 그대로 펫의 답변이 된다.
+   */
+  const ADD_TRIGGERS = ["할 일 추가", "할일 추가", "할 일 등록", "할일 등록", "투두 추가", "todo 추가"];
+  ctx.actions.registerAction({
+    id: "add",
+    callback: async (payload) => {
+      const body = stripTrigger(payload?.text ?? "", ADD_TRIGGERS);
+      if (!body) return "뭘 할 일로 넣을까? 예를 들어 \"할 일 추가 내일 3시까지 보고서\" 처럼 말해줘.";
+      const result = await composeDrafts({ title: body, notes: "", ...parseHints(body) });
+      if (result.many) {
+        await run({ type: "addMany", tasks: result.drafts });
+        return `할 일 ${result.drafts.length}건 넣었어: ${result.drafts.map((d) => d.title).join(", ")}`;
+      }
+      if (!result.task.title) return "할 일로 만들 내용을 못 찾았어. 다시 한 번 말해줄래?";
+      await run({ type: "add", task: result.task });
+      const when = result.task.due ? ` (${result.task.due.replace("T", " ")})` : "";
+      return `할 일에 넣었어: "${result.task.title}"${when}`;
+    },
+  });
+  ctx.commands.addCommand({
+    id: "todo_add",
+    title: "할 일 추가",
+    // 열기/확인 커맨드보다 먼저 잡아야 "할 일 추가 …"가 "할 일"에 뺏기지 않는다.
+    matchers: [{ type: "keyword", patterns: ADD_TRIGGERS, priority: 30 }],
+    backend: { type: "builtin", handler: "add" },
   });
 
   ctx.commands.addCommand({
