@@ -11,14 +11,16 @@ import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** 보류(hold) = 의도적으로 세워둔 일. 완료가 아니므로 미완으로 집계된다. */
-const STATUSES = ["todo", "doing", "hold", "done"];
 /**
- * 보류는 **먼저 꺼내지 않는다** — 말풍선 알림과 아침 브리핑에서 빠진다.
- * 사용자가 일부러 세워둔 걸 펫이 들쑤시면 안 된다. 목록·통계·"할 일 뭐 있어?"처럼
- * 사용자가 직접 물어보는 자리에는 그대로 나온다(숨기는 게 아니라 조용할 뿐).
+ * 보드 상태. inbox 가 맨 앞이다 — 새로 들어온 것과 "일단 넣어둔 것" 이 여기 모이고,
+ * 사용자가 훑어 '할 일' 로 올린다. 예전 '보류' 역할을 inbox 가 흡수했다.
+ *
+ * 안 하기로 한 것은 상태가 아니라 **보관함**(보드 밖)으로 간다 — 보드에 남은 건 전부 살아있는
+ * 일이어야 필터가 단순해진다.
  */
-const isParked = (t) => t.status === "hold";
+const STATUSES = ["inbox", "todo", "doing", "done"];
+/** 새로 들어온 것은 분류 전 상태로 시작한다. */
+const DEFAULT_STATUS = "inbox";
 /** 빈 문자열 = 중요도 없음. 노션처럼 "굳이 안 정해도 되는" 속성으로 둔다. */
 export const PRIORITIES = ["high", "medium", "low"];
 const MAX_AI_CHARS = 120;
@@ -43,7 +45,7 @@ export const isOpen = (t) => t.status !== "done";
 export function normalizeTask(raw, now = new Date(), id = null) {
   const title = String(raw?.title ?? "").trim().slice(0, 200);
   if (!title) return null;
-  const status = STATUSES.includes(raw?.status) ? raw.status : "todo";
+  const status = STATUSES.includes(raw?.status) ? raw.status : DEFAULT_STATUS;
   const tags = Array.isArray(raw?.tags)
     ? raw.tags.map((t) => String(t).trim().slice(0, 24)).filter(Boolean).slice(0, 6)
     : [];
@@ -294,7 +296,8 @@ export function parseHints(text, now = new Date()) {
  * 계획했다가 접은 카드를 보드 밖으로 옮긴다.
  *
  * 바로 지우지 않는다 — 끌어다 놓는 동작은 실수하기 쉽고, 되돌릴 수 없으면 다시는 안 쓰게 된다.
- * '버림' 으로 옮겨두고 언제든 되돌리거나 완전히 지울 수 있게 한다.
+ * 보관함으로 옮겨두고 언제든 되돌리거나 완전히 지울 수 있게 한다 — 이름이 "버림" 이 아니라
+ * "보관" 이어야 부담 없이 던져 넣는다.
  */
 export function discardTask(tasks, discarded, id, now = new Date()) {
   const hit = (tasks ?? []).find((t) => t.id === id);
@@ -305,13 +308,13 @@ export function discardTask(tasks, discarded, id, now = new Date()) {
   };
 }
 
-/** 버림에서 보드로 되돌린다. 상태는 '할 일' 로 — 접었던 걸 다시 꺼내는 것이니 처음부터. */
+/** 보관함에서 보드로 되돌린다. 상태는 Inbox — 다시 하기로 한 것이니 어디에 둘지부터 정한다. */
 export function restoreTask(tasks, discarded, id) {
   const hit = (discarded ?? []).find((t) => t.id === id);
   if (!hit) return { tasks: tasks ?? [], discarded: discarded ?? [] };
   const { discardedAt, ...task } = hit;
   return {
-    tasks: [...(tasks ?? []), { ...task, status: "todo" }],
+    tasks: [...(tasks ?? []), { ...task, status: "inbox" }],
     discarded: (discarded ?? []).filter((t) => t.id !== id),
   };
 }
@@ -319,13 +322,13 @@ export function restoreTask(tasks, discarded, id) {
 /**
  * 이번 주에 실제로 손대야 하는 것들 — 칸반 위에 먼저 보여줄 목록.
  *
- * 기준: 살아있는 항목(완료·보류 제외) 중 **이번 주 안에 마감**이거나 **중요도 높음**.
+ * 기준: 살아있는 항목(완료 제외) 중 **이번 주 안에 마감**이거나 **중요도 높음**.
  * 지난 마감이 맨 위다(이미 늦은 게 제일 급하다). 그다음 마감 빠른 순, 마감 없는 중요 건이 뒤.
  * 칸반이 주인공이므로 목록은 짧게 자른다.
  */
 export function weekFocus(tasks, now = new Date(), limit = 4) {
   const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
-  const live = (tasks ?? []).filter((t) => isOpen(t) && !isParked(t));
+  const live = (tasks ?? []).filter(isOpen);
   const picked = live.filter((t) => {
     const d = dueDate(t);
     return (d && d <= weekEnd) || t.priority === "high";
@@ -366,7 +369,7 @@ export function stats(tasks, now = new Date()) {
     total: list.length,
     todo: list.filter((t) => t.status === "todo").length,
     doing: list.filter((t) => t.status === "doing").length,
-    hold: list.filter(isParked).length,
+    inbox: list.filter((t) => t.status === "inbox").length,
     done,
     overdue: byDue((d) => d < now && !isSameDay(d, now)),
     today: byDue((d) => isSameDay(d, now)),
@@ -375,17 +378,17 @@ export function stats(tasks, now = new Date()) {
   };
 }
 
-const STATUS_LABEL = { todo: "할 일", doing: "진행 중", hold: "보류", done: "완료" };
+const STATUS_LABEL = { inbox: "Inbox", todo: "할 일", doing: "진행 중", done: "완료" };
 const PRIORITY_LABEL = { high: "높음", medium: "보통", low: "낮음" };
 
 /**
  * 제목으로 할 일을 찾는다. 정확 일치 → 시작 일치 → 부분 일치 순.
- * 완료/보류보다 살아있는 항목을 먼저 집는다(같은 제목이 여러 번 나오는 흔한 경우).
+ * 완료/미분류보다 손대고 있는 항목을 먼저 집는다(같은 제목이 여러 번 나오는 흔한 경우).
  */
 export function findTask(tasks, query) {
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return null;
-  const rank = (t) => (t.status === "done" ? 2 : t.status === "hold" ? 1 : 0);
+  const rank = (t) => (t.status === "done" ? 2 : t.status === "inbox" ? 1 : 0);
   const pick = (pred) =>
     (tasks ?? []).filter((t) => pred(String(t.title ?? "").toLowerCase())).sort((a, b) => rank(a) - rank(b))[0];
   return pick((s) => s === q) ?? pick((s) => s.startsWith(q)) ?? pick((s) => s.includes(q)) ?? null;
@@ -419,7 +422,7 @@ export function detailText(task) {
 /** 캘린더 등 다른 플러그인에 흘려보낼 마감 목록. 노트 같은 본문은 싣지 않는다. */
 export function deadlinePayload(tasks) {
   return (tasks ?? [])
-    .filter((t) => isOpen(t) && !isParked(t) && t.due)
+    .filter((t) => isOpen(t) && t.due)
     .map((t) => ({ id: t.id, title: t.title, due: t.due, priority: t.priority ?? "" }));
 }
 
@@ -436,19 +439,16 @@ export function summarizeForAi(tasks, now = new Date()) {
     return d && isSameDay(d, now);
   });
   const high = open.filter((t) => t.priority === "high");
-  const held = open.filter(isParked);
   const parts = [`미완 ${open.length}건`];
-  if (held.length) parts.push(`보류 ${held.length}건`);
   if (high.length) parts.push(`중요 ${high.length}건`);
   if (overdue.length) parts.push(`지난 마감 ${overdue.length}건`);
   if (today.length) parts.push(`오늘 마감: ${today.map((t) => t.title).join(", ")}`);
   return parts.join(" · ").slice(0, MAX_AI_CHARS);
 }
 
-/** 아침 브리핑 한 줄. 알릴 게 없으면 빈 문자열 — 호스트가 조용히 넘어간다.
- *  보류는 빠진다 — 세워둔 일을 아침부터 다시 들이밀지 않는다. */
+/** 아침 브리핑 한 줄. 알릴 게 없으면 빈 문자열 — 호스트가 조용히 넘어간다. */
 export function briefingLine(tasks, now = new Date()) {
-  const open = (tasks ?? []).filter((t) => isOpen(t) && !isParked(t));
+  const open = (tasks ?? []).filter(isOpen);
   if (!open.length) return "";
   const due = open.filter((t) => {
     const d = dueDate(t);
@@ -459,12 +459,11 @@ export function briefingLine(tasks, now = new Date()) {
   return `${head} (오늘까지: ${due.map((t) => t.title).join(", ")})`.slice(0, 300);
 }
 
-/** 마감 lead분 이내이면서 아직 안 알린 항목. notified는 { [id]: dueISO }.
- *  보류는 알리지 않는다 — 사용자가 일부러 세워둔 일이다. */
+/** 마감 lead분 이내이면서 아직 안 알린 항목. notified는 { [id]: dueISO }. */
 export function dueSoon(tasks, now = new Date(), leadMinutes = REMIND_LEAD_MIN, notified = {}) {
   const limit = new Date(now.getTime() + leadMinutes * 60_000);
   return (tasks ?? []).filter((t) => {
-    if (!isOpen(t) || isParked(t)) return false;
+    if (!isOpen(t)) return false;
     const d = dueDate(t);
     if (!d || d > limit) return false;
     // 마감을 고쳐 다시 다가오면 재알림 — 같은 마감으로는 한 번만.
@@ -564,6 +563,11 @@ export function activate(ctx) {
     discarded = (await storage.getJson("discarded")) ?? [];
     if (!Array.isArray(discarded)) discarded = [];
     if (!Array.isArray(tasks)) tasks = [];
+    // 예전 보류 컬럼 이주 — 저장된 항목은 정규화를 다시 거치지 않으므로 여기서 옮긴다.
+    if (tasks.some((t) => t?.status === "hold")) {
+      tasks = tasks.map((t) => (t?.status === "hold" ? { ...t, status: "inbox" } : t));
+      await storage.setJson("tasks", tasks);
+    }
   };
   const save = async () => {
     await storage.setJson("tasks", tasks);

@@ -54,14 +54,14 @@ for (const page of ["palette/index.html", "tray/index.html"]) {
 const now = new Date("2026-08-02T09:00:00");
 let tasks = plugin.applyCommand([], { type: "add", task: { title: "보고서" } }, now);
 assert.equal(tasks.length, 1);
-assert.equal(tasks[0].status, "todo");
+assert.equal(tasks[0].status, "inbox", "새로 들어온 건 분류 전 Inbox 에서 시작");
 assert.equal(tasks[0].source, "manual");
 assert.equal(plugin.applyCommand([], { type: "add", task: { title: "   " } }, now).length, 0, "빈 제목은 거부");
 
 tasks = plugin.applyCommand(tasks, { type: "toggle", id: tasks[0].id }, now);
 assert.equal(tasks[0].status, "done");
 tasks = plugin.applyCommand(tasks, { type: "toggle", id: tasks[0].id }, now);
-assert.equal(tasks[0].status, "todo", "toggle은 왕복해야 한다");
+assert.equal(tasks[0].status, "todo", "완료를 풀면 할 일로 — Inbox 로 되돌리지 않는다");
 
 tasks = plugin.applyCommand(tasks, { type: "move", id: tasks[0].id, status: "doing" }, now);
 assert.equal(tasks[0].status, "doing");
@@ -88,7 +88,7 @@ assert.equal(plugin.applyCommand([{ id: "x", status: "done" }], { type: "clearDo
 const dirty = plugin.normalizeTask({ title: "x".repeat(500), tags: ["a", "b", "c", "d", "e", "f", "g"], status: "hacked" }, now);
 assert.equal(dirty.title.length, 200);
 assert.equal(dirty.tags.length, 6);
-assert.equal(dirty.status, "todo");
+assert.equal(dirty.status, "inbox");
 
 /* ── 추출 파서 ── */
 assert.deepEqual(plugin.parseDraftJson('[{"title":"우유 사기","due":"2026-08-03"}]').map((d) => d.title), ["우유 사기"]);
@@ -183,7 +183,7 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   ({ tasks: list, discarded: bin } = plugin.restoreTask(list, bin, id));
   assert.equal(list.length, 1);
   assert.equal(bin.length, 0);
-  assert.equal(list[0].status, "todo", "되돌리면 '할 일' 부터 다시 시작");
+  assert.equal(list[0].status, "inbox", "되돌리면 Inbox 로 — 어디에 둘지부터 다시 정한다");
   assert.equal(list[0].discardedAt, undefined, "되돌린 항목에 버린 시각이 남으면 안 된다");
   assert.equal(list[0].title, "접은 계획");
 
@@ -209,23 +209,22 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
     t({ title: "중요한데마감없음", priority: "high" }),
     t({ title: "먼일", due: "2026-09-20" }),
     t({ title: "그냥할일" }),
-    t({ title: "보류건", status: "hold", due: "2026-08-03" }),
+    t({ title: "인박스건", status: "inbox", due: "2026-08-03" }),
     t({ title: "끝난건", status: "done", due: "2026-08-03" }),
   ];
   const f = plugin.weekFocus(bag, base, 10);
   const titles = f.items.map((x) => x.title);
   // 지난 마감이 맨 위 → 마감 빠른 순 → 마감 없는 중요 건
-  assert.deepEqual(titles, ["지난주정산", "오늘보고서", "수요회의", "중요한데마감없음"]);
-  assert.equal(f.total, 4);
+  assert.deepEqual(titles, ["지난주정산", "오늘보고서", "인박스건", "수요회의", "중요한데마감없음"]);
+  assert.equal(f.total, 5);
   assert.ok(!titles.includes("먼일"), "이번 주 밖은 안 올린다");
   assert.ok(!titles.includes("그냥할일"), "마감도 중요도도 없으면 칸반에만 둔다");
-  assert.ok(!titles.includes("보류건"), "보류는 여기서도 안 꺼낸다");
   assert.ok(!titles.includes("끝난건"), "완료는 제외");
 
   // 칸반이 주인공이라 목록은 짧게 자르고 남은 수를 알려준다
   const capped = plugin.weekFocus(bag, base, 2);
   assert.equal(capped.items.length, 2);
-  assert.equal(capped.total, 4);
+  assert.equal(capped.total, 5);
   assert.deepEqual(plugin.weekFocus([], base).items, []);
   assert.equal(plugin.weekFocus(null, base).total, 0);
 }
@@ -234,20 +233,22 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
 {
   const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
   const bag = [
-    t({ title: "a", due: "2026-08-02T14:00", priority: "high" }),
+    t({ title: "a", status: "todo", due: "2026-08-02T14:00", priority: "high" }),
     t({ title: "b", status: "doing" }),
     t({ title: "c", status: "done" }),
-    t({ title: "d", due: "2026-07-20" }),
+    t({ title: "d", status: "todo", due: "2026-07-20" }),
+    t({ title: "e" }),   // 상태를 안 주면 Inbox
   ];
   const s = plugin.stats(bag, now);
-  assert.equal(s.total, 4);
+  assert.equal(s.total, 5);
   assert.equal(s.todo, 2);
   assert.equal(s.doing, 1);
+  assert.equal(s.inbox, 1);
   assert.equal(s.done, 1);
   assert.equal(s.today, 1);
   assert.equal(s.overdue, 1);
   assert.equal(s.high, 1);
-  assert.equal(s.percent, 25);
+  assert.equal(s.percent, 20);
   const empty = plugin.stats([], now);
   assert.equal(empty.percent, 0, "0건일 때 0으로 나누면 안 된다");
   assert.equal(plugin.stats([t({ status: "done" })], now).percent, 100);
@@ -256,29 +257,28 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.equal(plugin.stats([t({ due: "2026-07-20", status: "done", priority: "high" })], now).high, 0);
 }
 
-/* ── 보류(hold) ── */
+/* ── Inbox ──
+   예전 '보류' 자리를 대신한다. 다만 보류와 달리 **조용하지 않다** — 새로 들어온 것이
+   여기 쌓이므로 알림에서 빼면 채팅으로 등록한 마감이 통째로 묻힌다. */
 {
   const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
-  const held = t({ title: "세워둔 일", status: "hold", due: "2026-08-02T09:05", priority: "high" });
-  assert.equal(held.status, "hold", "hold 는 유효한 상태다");
+  const parked = t({ title: "넣어둔 일", status: "inbox", due: "2026-08-02T09:05", priority: "high" });
+  assert.equal(parked.status, "inbox", "inbox 는 유효한 상태다");
+  assert.equal(plugin.normalizeTask({ title: "a", status: "hold" }, now).status, "inbox", "옛 hold 는 더는 통과되지 않는다");
   const one = plugin.applyCommand([], { type: "add", task: { title: "a" } }, now);
-  assert.equal(plugin.applyCommand(one, { type: "move", id: one[0].id, status: "hold" }, now)[0].status, "hold");
+  assert.equal(plugin.applyCommand(one, { type: "move", id: one[0].id, status: "hold" }, now)[0].status, "inbox", "hold 로는 못 옮긴다");
 
-  // 보류는 완료가 아니다 — 미완으로 잡히고 통계에 따로 나온다.
-  const s = plugin.stats([held, t({ title: "b" })], now);
-  assert.equal(s.hold, 1);
+  // 완료가 아니므로 미완으로 잡히고 통계에 따로 나온다.
+  const s = plugin.stats([parked, t({ title: "b", status: "todo" })], now);
+  assert.equal(s.inbox, 1);
   assert.equal(s.done, 0);
-  assert.equal(s.percent, 0, "보류는 진행률에 완료로 잡히면 안 된다");
-  assert.match(plugin.summarizeForAi([held], now), /보류 1건/, "물어보면 보류도 알려준다");
+  assert.equal(s.percent, 0);
+  assert.match(plugin.summarizeForAi([parked], now), /미완 1건/);
 
-  // 보류는 먼저 꺼내지 않는다 — 말풍선 알림과 아침 브리핑에서 빠진다.
-  assert.deepEqual(plugin.dueSoon([held], now, 10, {}), [], "보류는 마감이 임박해도 알리지 않는다");
-  assert.equal(plugin.briefingLine([held], now), "", "보류뿐이면 브리핑할 게 없다");
-  assert.match(plugin.briefingLine([held, t({ title: "살아있는 일" })], now), /할 일 1건/, "보류는 브리핑 집계에서 빠진다");
-  // 보류를 풀면 다시 알린다.
-  const revived = { ...held, status: "todo" };
-  assert.equal(plugin.dueSoon([revived], now, 10, {}).length, 1);
-  assert.equal(plugin.applyCommand([held], { type: "clearDone" }).length, 1, "보류는 완료 정리에 지워지면 안 된다");
+  // 보류와 달리 알림·브리핑·캘린더에 **전부 나온다**.
+  assert.equal(plugin.dueSoon([parked], now, 10, {}).length, 1, "Inbox 라도 마감이 임박하면 알린다");
+  assert.match(plugin.briefingLine([parked], now), /할 일 1건/, "Inbox 도 브리핑에 잡힌다");
+  assert.equal(plugin.applyCommand([parked], { type: "clearDone" }).length, 1, "완료 정리에 지워지면 안 된다");
 }
 
 /* ── 로컬 힌트 파서 (노션 페이지 자동 채우기) ── */
@@ -369,7 +369,7 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.equal(plugin.findTask(bag, ""), null);
   assert.equal(plugin.findTask([], "x"), null);
   // 같은 말에 걸리면 살아있는 항목을 먼저 집는다
-  assert.equal(plugin.findTask([t({ title: "회의", status: "done" }), t({ title: "회의" })], "회의").status, "todo");
+  assert.equal(plugin.findTask([t({ title: "회의", status: "done" }), t({ title: "회의", status: "todo" })], "회의").status, "todo");
 
   const text = plugin.detailText(plugin.findTask(bag, "보고서"));
   assert.match(text, /보고서/);
@@ -385,7 +385,11 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.deepEqual(payload.map((p) => p.title), ["보고서"]);
   assert.equal(payload[0].notes, undefined, "브로드캐스트에 노트가 새면 안 된다");
   assert.ok(payload[0].due && payload[0].id);
-  assert.deepEqual(plugin.deadlinePayload([t({ title: "보류", status: "hold", due: "2026-08-03" })]), [], "보류는 캘린더에도 안 띄운다");
+  assert.deepEqual(
+    plugin.deadlinePayload([t({ title: "인박스", status: "inbox", due: "2026-08-03" })]).map((x) => x.title),
+    ["인박스"],
+    "Inbox 라도 마감이 있으면 캘린더에 뜬다",
+  );
   assert.deepEqual(plugin.deadlinePayload([t({ title: "완료", status: "done", due: "2026-08-03" })]), []);
   assert.deepEqual(plugin.deadlinePayload([t({ title: "마감없음" })]), []);
   assert.deepEqual(plugin.deadlinePayload(null), []);

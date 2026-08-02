@@ -64,7 +64,7 @@
   .stat span { color: var(--muted); font-size: 11px; }
   .stat.alert b { color: var(--danger); }
   .stat.today b { color: var(--warn); }
-  .stat.hold b { color: var(--muted); }
+  .stat.inbox b { color: var(--muted); }
   .bar { height: 3px; background: var(--track); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
   .sep { width: 1px; align-self: stretch; background: var(--line); }
@@ -107,14 +107,12 @@
   .pri.high { color: var(--hi-fg); }
   .pri.medium { color: var(--md-fg); }
   .pri.low { color: var(--lo-fg); }
-  .pri.hold { color: var(--muted); }
 
   /* 메모·기록 유무는 이모지 대신 작은 글자 라벨로. */
   .tagmark {
     font-size: 10px; color: var(--muted); letter-spacing: .2px; white-space: nowrap;
     padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; line-height: 15px;
   }
-  .row.held { opacity: .72; border-style: dashed; }
 
   /* ── 리스트 ── */
   .row { display: flex; gap: 9px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin-bottom: 6px; }
@@ -126,37 +124,38 @@
   .tag { font-size: 11px; color: var(--muted); }
 
   /* ── 칸반 ── */
+  /* 노션 보드처럼 컬럼 높이가 내용을 따라간다 — 빈 컬럼이 커다란 빈 상자로 남지 않는다.
+     행을 1fr 로 고정해 두고 컬럼은 start 정렬이라, 길어지면 창 높이에서 멈추고 안쪽만 스크롤한다. */
   .board {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px;
+    display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: minmax(0, 1fr); gap: 9px;
     flex: 1; min-height: 0;
   }
-  /* 보류 컬럼은 한 톤 죽여 "지금 안 하는 것"으로 읽히게 한다. */
-  .col.hold { background: transparent; border-style: dashed; }
-  .col.hold .chip { opacity: .72; }
+  /* Inbox 는 분류 전 임시 자리 — 점선으로 "거쳐 가는 곳"임을 드러낸다. */
+  .col.col-inbox { background: transparent; border-style: dashed; }
   .col {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px;
-    min-height: 0; display: flex; flex-direction: column;
+    /* 내용을 따라 늘되 너무 납작해지진 않는다 — 빈 컬럼도 카드를 떨어뜨릴 만큼은 있어야 한다. */
+    align-self: start; max-height: 100%; min-height: 200px; display: flex; flex-direction: column;
   }
   .col h2 { margin: 2px 4px 8px; font-size: 12px; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; flex: none; }
   /* 카드만 스크롤한다 — 컬럼 머리글과 '+ 추가'는 늘 보여야 한다. */
   .col .items { flex: 1; min-height: 0; overflow-y: auto; }
   .col .addrow { flex: none; margin-top: 4px; }
 
-  /* ── 버리는 곳 ──
+  /* ── 보관함 ──
      끌기 시작할 때만 나타난다. 늘 떠 있으면 실수로 누르기 쉽고 화면만 먹는다.
-     떨어뜨려도 바로 지우지 않고 '버림' 으로 옮긴다 — 되돌릴 수 있어야 한다. */
+     "버림" 이 아니라 "보관" 이다 — 되돌릴 수 있으니 부담 없이 던져 넣게 이름을 고른다. */
   .trash {
-    position: fixed; right: 16px; bottom: 16px; width: 108px; height: 76px;
+    position: fixed; right: 16px; bottom: 16px; width: 116px; height: 68px;
     display: none; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
     border: 1px dashed var(--line); border-radius: 12px; background: var(--card);
     color: var(--muted); font-size: 11px; text-align: center; z-index: 20;
     box-shadow: 0 4px 14px rgba(0,0,0,.10);
   }
   .trash.show { display: flex; }
-  .trash.over { border-style: solid; border-color: var(--danger); color: var(--danger); }
-  .trash .lid { font-size: 18px; line-height: 1; }
-  .trash b { font-weight: 600; }
-  /* 버림 보관함 — 되돌리거나 완전히 지운다. */
+  .trash.over { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  .trash b { font-weight: 600; font-size: 12px; color: var(--fg); }
+  /* 보관함 시트 — 되돌리거나 완전히 지운다. */
   .binlist { max-height: 320px; overflow: auto; }
   .binrow { display: flex; gap: 8px; align-items: center; padding: 7px 2px; border-bottom: 1px solid var(--line); }
   .binrow .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -240,9 +239,8 @@
 
 <main id="main"><div class="empty">불러오는 중…</div></main>
 <div class="trash" id="trash">
-  <span class="lid">×</span>
-  <b>여기로 끌어다 버리기</b>
-  <span>되돌릴 수 있어요</span>
+  <b>보관함</b>
+  <span>여기로 끌어다 놓기</span>
 </div>
 <input id="file" type="file" accept="image/*" hidden />
 
@@ -258,9 +256,9 @@ let discarded = [];
 let stats = null;
 
 const COLUMNS = [
+  { id: "inbox", label: "Inbox" },
   { id: "todo", label: "할 일" },
   { id: "doing", label: "진행 중" },
-  { id: "hold", label: "보류" },
   { id: "done", label: "완료" },
 ];
 const PRI_LABEL = { high: "높음", medium: "보통", low: "낮음" };
@@ -286,8 +284,8 @@ function renderStats() {
   const cell = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
   // 제목표시줄 안이라 폭이 귀하다 — 전체 건수는 아래 진행 막대가 이미 말해준다.
   const parts = [cell(stats.todo, "할 일"), cell(stats.doing, "진행"), cell(stats.done, "완료")];
-  if (stats.hold) parts.splice(2, 0, cell(stats.hold, "보류", "hold"));
-  if (discarded.length) parts.push(`<button class="binbtn" id="binbtn">버림 ${discarded.length}</button>`);
+  if (stats.inbox) parts.unshift(cell(stats.inbox, "Inbox", "inbox"));
+  if (discarded.length) parts.push(`<button class="binbtn" id="binbtn">보관함 ${discarded.length}</button>`);
   const alerts = [];
   if (stats.overdue) alerts.push(cell(stats.overdue, "지난 마감", "alert"));
   if (stats.today) alerts.push(cell(stats.today, "오늘 마감", "today"));
@@ -366,7 +364,7 @@ function renderKanban(main) {
   const rank = { high: 0, medium: 1, low: 2, "": 3 };
   for (const col of COLUMNS) {
     const box = document.createElement("section");
-    box.className = "col" + (col.id === "hold" ? " hold" : "");
+    box.className = "col col-" + col.id;
     const items = tasks.filter((x) => x.status === col.id)
       .sort((a, b) => rank[a.priority ?? ""] - rank[b.priority ?? ""] || a.order - b.order);
     box.innerHTML = `<h2><span>${col.label}</span><span>${items.length}</span></h2>`;
@@ -396,7 +394,7 @@ function renderKanban(main) {
       let dragged = false;
       chip.addEventListener("dragstart", () => {
         dragged = true;
-        $("trash").classList.add("show");   // 끌 때만 버리는 곳을 띄운다
+        $("trash").classList.add("show");   // 끌 때만 보관함을 띄운다
       });
       chip.addEventListener("dragend", () => {
         $("trash").classList.remove("show", "over");
@@ -448,9 +446,10 @@ function openPage(existing, status) {
       <div class="props">
         <div class="k">상태</div>
         <div class="v seg" id="p-status">
+          <button data-s="inbox">Inbox</button>
           <button data-s="todo">할 일</button>
           <button data-s="doing">진행 중</button>
-          <button data-s="hold">보류</button>
+
           <button data-s="done">완료</button>
         </div>
         <div class="k">중요도</div>
@@ -679,7 +678,7 @@ function showDrafts(drafts, raw) {
 /* ── 이벤트 ── */
 $("close").addEventListener("click", () => bridge.close());
 
-/* 버리는 곳 — 떨어뜨리면 보드에서 빼고 '버림' 으로 옮긴다(삭제 아님). */
+/* 보관함 — 떨어뜨리면 보드에서 빼되 지우지는 않는다. */
 $("trash").addEventListener("dragover", (e) => { e.preventDefault(); $("trash").classList.add("over"); });
 $("trash").addEventListener("dragleave", () => $("trash").classList.remove("over"));
 $("trash").addEventListener("drop", (e) => {
@@ -689,7 +688,7 @@ $("trash").addEventListener("drop", (e) => {
   if (id) bridge.postMessage({ type: "todo.discard", id });
 });
 
-/** 버림 보관함 — 되돌리거나 완전히 지운다. */
+/** 보관함 — 되돌리거나 완전히 지운다. */
 function openBin() {
   const sheet = document.createElement("div");
   sheet.className = "sheet";
@@ -697,10 +696,10 @@ function openBin() {
     ? `<div class="binlist">${[...discarded].reverse().map((t) =>
         `<div class="binrow" data-id="${esc(t.id)}"><span class="t">${esc(t.title)}</span>` +
         `<button class="restore">되돌리기</button><button class="link purge" title="완전히 삭제">×</button></div>`).join("")}</div>`
-    : '<div class="empty" style="padding:16px">버린 항목이 없어요.</div>';
+    : '<div class="empty" style="padding:16px">보관한 항목이 없어요.</div>';
   sheet.innerHTML =
-    `<div><h2>버림 ${discarded.length}</h2><div class="body">${rows}</div>` +
-    `<div class="foot">${discarded.length ? '<button id="bin-all">전부 비우기</button>' : ""}` +
+    `<div><h2>보관함 ${discarded.length}</h2><div class="body">${rows}</div>` +
+    `<div class="foot">${discarded.length ? '<button id="bin-all">전부 삭제</button>' : ""}` +
     `<span class="grow"></span><button id="bin-close">닫기</button></div></div>`;
   document.body.append(sheet);
   sheet.querySelector("#bin-close").addEventListener("click", () => sheet.remove());
