@@ -480,7 +480,7 @@ const longSummary = plugin.summarizeForAi(
 );
 assert.ok(longSummary.length <= 120, `aiContext 한 줄은 120자 이하여야 한다 (실제 ${longSummary.length})`);
 
-assert.equal(plugin.briefingLine([], now), "", "알릴 게 없으면 빈 문자열 — 펫이 조용히 넘어간다");
+assert.equal(plugin.briefingLine([], now), "", "알릴 게 없으면 빈 문자열 — DAP이 조용히 넘어간다");
 assert.match(plugin.briefingLine([t({ title: "a" })], now), /할 일 1건/);
 assert.match(plugin.briefingLine([t({ title: "보고서", due: "2026-08-02T14:00" })], now), /오늘까지: 보고서/);
 assert.ok(plugin.briefingLine(Array.from({ length: 40 }, (_, i) => t({ title: `할일${i}`, due: "2026-08-02" })), now).length <= 300);

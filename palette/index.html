@@ -356,7 +356,7 @@ function renderKanban(main) {
   if (!tasks.length) {
     const hint = document.createElement("div");
     hint.className = "empty";
-    hint.innerHTML = "아직 할 일이 없어요.<br />아래 컬럼에서 바로 추가하거나, 펫에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
+    hint.innerHTML = "아직 할 일이 없어요.<br />아래 컬럼에서 바로 추가하거나, DAP에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
     main.append(hint);
   }
   const board = document.createElement("div");
