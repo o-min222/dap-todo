@@ -384,11 +384,14 @@ const PRIORITY_LABEL = { high: "높음", medium: "보통", low: "낮음" };
 /**
  * 제목으로 할 일을 찾는다. 정확 일치 → 시작 일치 → 부분 일치 순.
  * 완료/미분류보다 손대고 있는 항목을 먼저 집는다(같은 제목이 여러 번 나오는 흔한 경우).
+ *
+ * 보관한 항목도 넘겨서 함께 찾을 수 있다 — "접었던 그 건 뭐였지?" 에 답하려면 필요하다.
+ * 다만 **가장 뒤로 민다**: 같은 제목이 보드와 보관함에 다 있으면 살아있는 쪽이 먼저다.
  */
 export function findTask(tasks, query) {
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return null;
-  const rank = (t) => (t.status === "done" ? 2 : t.status === "inbox" ? 1 : 0);
+  const rank = (t) => (t.discardedAt ? 3 : t.status === "done" ? 2 : t.status === "inbox" ? 1 : 0);
   const pick = (pred) =>
     (tasks ?? []).filter((t) => pred(String(t.title ?? "").toLowerCase())).sort((a, b) => rank(a) - rank(b))[0];
   return pick((s) => s === q) ?? pick((s) => s.startsWith(q)) ?? pick((s) => s.includes(q)) ?? null;
@@ -401,7 +404,12 @@ export function findTask(tasks, query) {
 export function detailText(task) {
   if (!task) return "";
   const lines = [`■ ${task.title}`];
-  const meta = [STATUS_LABEL[task.status] ?? task.status];
+  // 보관한 건은 상태 대신 그 사실을 앞세운다 — 안 하기로 한 걸 진행 중처럼 읽으면 안 된다.
+  const meta = [
+    task.discardedAt
+      ? `보관함 (${String(task.discardedAt).slice(5, 10)} 보관)`
+      : STATUS_LABEL[task.status] ?? task.status,
+  ];
   if (task.priority) meta.push(`중요도 ${PRIORITY_LABEL[task.priority]}`);
   if (task.due) meta.push(`마감 ${task.due.replace("T", " ")}`);
   if (task.tags?.length) meta.push(task.tags.map((x) => `#${x}`).join(" "));
@@ -419,6 +427,18 @@ export function detailText(task) {
   return lines.join("\n");
 }
 
+/** 보관함을 채팅으로 읽어줄 때 쓰는 목록. 최근 보관한 것이 위. */
+export function archiveText(archived, limit = 12) {
+  const list = [...(archived ?? [])].reverse();
+  if (!list.length) return "보관한 할 일이 없어.";
+  const lines = list.slice(0, limit).map((t) => {
+    const when = String(t.discardedAt ?? "").slice(5, 10);
+    return `- ${t.title}${when ? ` (${when} 보관)` : ""}`;
+  });
+  const more = list.length - lines.length;
+  return [`보관함 ${list.length}건`, ...lines, more > 0 ? `…외 ${more}건` : ""].filter(Boolean).join("\n");
+}
+
 /** 캘린더 등 다른 플러그인에 흘려보낼 마감 목록. 노트 같은 본문은 싣지 않는다. */
 export function deadlinePayload(tasks) {
   return (tasks ?? [])
@@ -426,10 +446,15 @@ export function deadlinePayload(tasks) {
     .map((t) => ({ id: t.id, title: t.title, due: t.due, priority: t.priority ?? "" }));
 }
 
-/** 매 대화 턴에 프롬프트로 들어가는 한 줄. 예산이 빡빡하므로 목록 덤프 금지. */
-export function summarizeForAi(tasks, now = new Date()) {
+/**
+ * 매 대화 턴에 프롬프트로 들어가는 한 줄. 예산이 빡빡하므로 목록 덤프 금지.
+ * 보관한 건은 **건수만** 흘린다 — 안 하기로 한 것의 제목까지 매 턴 실으면 예산만 먹는다.
+ * 제목이 필요한 순간엔 '보관함' 커맨드가 있다.
+ */
+export function summarizeForAi(tasks, now = new Date(), archived = []) {
   const open = (tasks ?? []).filter(isOpen);
-  if (!open.length) return "";
+  const kept = (archived ?? []).length;
+  if (!open.length) return kept ? `보관 ${kept}건` : "";
   const overdue = open.filter((t) => {
     const d = dueDate(t);
     return d && d < now && !isSameDay(d, now);
@@ -443,6 +468,7 @@ export function summarizeForAi(tasks, now = new Date()) {
   if (high.length) parts.push(`중요 ${high.length}건`);
   if (overdue.length) parts.push(`지난 마감 ${overdue.length}건`);
   if (today.length) parts.push(`오늘 마감: ${today.map((t) => t.title).join(", ")}`);
+  if (kept) parts.push(`보관 ${kept}건`);
   return parts.join(" · ").slice(0, MAX_AI_CHARS);
 }
 
@@ -597,7 +623,7 @@ export function activate(ctx) {
       /* 창이 닫혔으면 무시 */
     }
     try {
-      trayPanel?.postMessage({ type: "todo.today", summary: summarizeForAi(tasks), tasks });
+      trayPanel?.postMessage({ type: "todo.today", summary: summarizeForAi(tasks, new Date(), discarded), tasks });
     } catch {
       /* 패널이 없으면 무시 */
     }
@@ -776,7 +802,7 @@ export function activate(ctx) {
   ctx.actions.registerAction({ id: "open", callback: () => void openPalette() });
   ctx.actions.registerAction({
     id: "summary",
-    callback: () => summarizeForAi(tasks) || "아직 등록한 할 일이 없어.",
+    callback: () => summarizeForAi(tasks, new Date(), discarded) || "아직 등록한 할 일이 없어.",
   });
   /**
    * 한 건의 전체 내용(노트 포함)을 채팅으로 읽어준다. aiContext는 300자라 요약만 담기므로,
@@ -793,7 +819,8 @@ export function activate(ctx) {
           ? `어떤 걸 볼까? ${open.map((t) => `"${t.title}"`).join(", ")}`
           : "아직 등록한 할 일이 없어.";
       }
-      const hit = findTask(tasks, q);
+      // 보관한 건도 찾는다 — "접었던 그거 뭐였지?" 에 답할 수 있어야 한다.
+      const hit = findTask([...tasks, ...discarded], q);
       return hit ? detailText(hit) : `"${q}" 로 찾은 할 일이 없어.`;
     },
   });
@@ -824,6 +851,16 @@ export function activate(ctx) {
     title: "할 일 기록",
     matchers: [{ type: "keyword", patterns: LOG_TRIGGERS, priority: 25 }],
     backend: { type: "builtin", handler: "log" },
+  });
+
+  /* 보관함 — 매 턴 요약에는 건수만 실리므로, 제목이 필요하면 여기로 온다. */
+  const ARCHIVE_TRIGGERS = ["보관함", "보관한 할 일", "접은 할 일"];
+  ctx.actions.registerAction({ id: "archive", callback: () => archiveText(discarded) });
+  ctx.commands.addCommand({
+    id: "todo_archive",
+    title: "보관함",
+    matchers: [{ type: "keyword", patterns: ARCHIVE_TRIGGERS, priority: 25 }],
+    backend: { type: "builtin", handler: "archive" },
   });
 
   ctx.commands.addCommand({
@@ -878,7 +915,7 @@ export function activate(ctx) {
   ctx.trayMenu.addItem({ itemId: "open", label: "할 일", actionId: "open", showInContextMenu: true });
   ctx.radialMenu.addItem({ itemId: "open", label: "할 일", actionId: "open", priority: 60, icon: "icon.png" });
 
-  ctx.aiContext.contribute({ id: "todo_summary", provider: () => summarizeForAi(tasks) });
+  ctx.aiContext.contribute({ id: "todo_summary", provider: () => summarizeForAi(tasks, new Date(), discarded) });
   ctx.briefing.contribute({ id: "today", provider: () => briefingLine(tasks) });
 
   trayPanel = ctx.trayPanel.register({ id: "today", page: "tray/index.html", height: 180, priority: 20 });

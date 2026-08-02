@@ -198,6 +198,38 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.ok(plugin.discardTask([{ id: "z", title: "z" }], many, "z", base).discarded.length <= 100);
 }
 
+/* ── 보관함도 DAP이 인지한다 ── */
+{
+  const base = new Date(2026, 7, 2, 9, 0);
+  const live = plugin.normalizeTask({ title: "살아있는 일", status: "todo" }, base);
+  const one = plugin.applyCommand([], { type: "add", task: { title: "접은 계획", notes: "예산이 안 나왔다" } }, base);
+  const bin = plugin.discardTask(one, [], one[0].id, base).discarded;
+
+  // 매 턴 요약에는 건수만 — 안 하기로 한 것의 제목까지 실으면 예산만 먹는다.
+  const line = plugin.summarizeForAi([live], base, bin);
+  assert.match(line, /보관 1건/);
+  assert.ok(!line.includes("접은 계획"), "요약에 보관 제목이 들어가면 안 된다");
+  assert.equal(plugin.summarizeForAi([], base, bin), "보관 1건", "보드가 비어도 보관함은 알린다");
+  assert.equal(plugin.summarizeForAi([], base, []), "");
+
+  // 제목이 필요하면 보관함 커맨드로
+  const text = plugin.archiveText(bin);
+  assert.match(text, /보관함 1건/);
+  assert.match(text, /접은 계획 \(08-02 보관\)/);
+  assert.equal(plugin.archiveText([]), "보관한 할 일이 없어.");
+  assert.ok(plugin.archiveText(Array.from({ length: 30 }, (_, i) => ({ title: `x${i}` }))).includes("외 18건"));
+
+  // "접었던 그거 뭐였지?" — 보관한 것도 찾아지고, 상세는 보관 사실을 앞세운다.
+  const hit = plugin.findTask([live, ...bin], "접은");
+  assert.equal(hit.title, "접은 계획");
+  const detail = plugin.detailText(hit);
+  assert.match(detail, /보관함 \(08-02 보관\)/);
+  assert.match(detail, /예산이 안 나왔다/, "노트도 그대로 읽어준다");
+  // 같은 제목이 보드와 보관함에 다 있으면 살아있는 쪽이 먼저다.
+  const dup = plugin.applyCommand([], { type: "add", task: { title: "접은 계획", status: "doing" } }, base);
+  assert.equal(plugin.findTask([...dup, ...bin], "접은 계획").status, "doing");
+}
+
 /* ── 이번 주 처리할 건 (칸반 위 목록) ── */
 {
   const base = new Date(2026, 7, 2, 9, 0);   // 2026-08-02 (일)

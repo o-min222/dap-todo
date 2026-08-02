@@ -285,14 +285,15 @@ function renderStats() {
   // 제목표시줄 안이라 폭이 귀하다 — 전체 건수는 아래 진행 막대가 이미 말해준다.
   const parts = [cell(stats.todo, "할 일"), cell(stats.doing, "진행"), cell(stats.done, "완료")];
   if (stats.inbox) parts.unshift(cell(stats.inbox, "Inbox", "inbox"));
-  if (discarded.length) parts.push(`<button class="binbtn" id="binbtn">보관함 ${discarded.length}</button>`);
+  // 보관함은 비어 있어도 늘 보인다 — 어디에 있는지 알아야 카드를 던져 넣는다.
+  parts.push(`<button class="binbtn" id="binbtn">보관함${discarded.length ? ` ${discarded.length}` : ""}</button>`);
   const alerts = [];
   if (stats.overdue) alerts.push(cell(stats.overdue, "지난 마감", "alert"));
   if (stats.today) alerts.push(cell(stats.today, "오늘 마감", "today"));
   if (stats.high) alerts.push(`<div class="stat"><span class="pri high">중요 ${stats.high}</span></div>`);
   $("stats").innerHTML = parts.join("") + (alerts.length ? `<div class="sep"></div>${alerts.join("")}` : "");
   $("bar").style.width = `${stats.percent}%`;
-  $("binbtn")?.addEventListener("click", openBin);
+  $("binbtn").addEventListener("click", openBin);
 }
 
 /* ── 목록 / 칸반 ── */
@@ -698,7 +699,7 @@ function openBin() {
         `<button class="restore">되돌리기</button><button class="link purge" title="완전히 삭제">×</button></div>`).join("")}</div>`
     : '<div class="empty" style="padding:16px">보관한 항목이 없어요.</div>';
   sheet.innerHTML =
-    `<div><h2>보관함 ${discarded.length}</h2><div class="body">${rows}</div>` +
+    `<div><h2>보관함${discarded.length ? ` ${discarded.length}` : ""}</h2><div class="body">${rows}</div>` +
     `<div class="foot">${discarded.length ? '<button id="bin-all">전부 삭제</button>' : ""}` +
     `<span class="grow"></span><button id="bin-close">닫기</button></div></div>`;
   document.body.append(sheet);
