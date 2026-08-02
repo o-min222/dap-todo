@@ -291,6 +291,32 @@ export function parseHints(text, now = new Date()) {
 }
 
 /**
+ * 계획했다가 접은 카드를 보드 밖으로 옮긴다.
+ *
+ * 바로 지우지 않는다 — 끌어다 놓는 동작은 실수하기 쉽고, 되돌릴 수 없으면 다시는 안 쓰게 된다.
+ * '버림' 으로 옮겨두고 언제든 되돌리거나 완전히 지울 수 있게 한다.
+ */
+export function discardTask(tasks, discarded, id, now = new Date()) {
+  const hit = (tasks ?? []).find((t) => t.id === id);
+  if (!hit) return { tasks: tasks ?? [], discarded: discarded ?? [] };
+  return {
+    tasks: (tasks ?? []).filter((t) => t.id !== id),
+    discarded: [...(discarded ?? []), { ...hit, discardedAt: new Date(now).toISOString() }].slice(-100),
+  };
+}
+
+/** 버림에서 보드로 되돌린다. 상태는 '할 일' 로 — 접었던 걸 다시 꺼내는 것이니 처음부터. */
+export function restoreTask(tasks, discarded, id) {
+  const hit = (discarded ?? []).find((t) => t.id === id);
+  if (!hit) return { tasks: tasks ?? [], discarded: discarded ?? [] };
+  const { discardedAt, ...task } = hit;
+  return {
+    tasks: [...(tasks ?? []), { ...task, status: "todo" }],
+    discarded: (discarded ?? []).filter((t) => t.id !== id),
+  };
+}
+
+/**
  * 이번 주에 실제로 손대야 하는 것들 — 칸반 위에 먼저 보여줄 목록.
  *
  * 기준: 살아있는 항목(완료·보류 제외) 중 **이번 주 안에 마감**이거나 **중요도 높음**.
@@ -527,6 +553,7 @@ export function activate(ctx) {
   let tasks = [];
   let notified = {};
   let focusCollapsed = false;
+  let discarded = [];
   let palette = null;
   let trayPanel = null;
 
@@ -534,6 +561,8 @@ export function activate(ctx) {
     tasks = (await storage.getJson("tasks")) ?? [];
     notified = (await storage.getJson("notified")) ?? {};
     focusCollapsed = (await storage.getJson("focusCollapsed")) === true;
+    discarded = (await storage.getJson("discarded")) ?? [];
+    if (!Array.isArray(discarded)) discarded = [];
     if (!Array.isArray(tasks)) tasks = [];
   };
   const save = async () => {
@@ -557,7 +586,7 @@ export function activate(ctx) {
 
   /** 살아있는 표면 전부에 현재 상태를 밀어준다. */
   const push = () => {
-    const payload = { type: "todo.state", tasks, stats: stats(tasks), focus: weekFocus(tasks), focusCollapsed };
+    const payload = { type: "todo.state", tasks, stats: stats(tasks), focus: weekFocus(tasks), focusCollapsed, discarded };
     try {
       palette?.postMessage(payload);
     } catch {
@@ -650,14 +679,35 @@ export function activate(ctx) {
     }
     palette = await ctx.host.windows.openPalette({
       page: "palette/index.html",
-      width: 760,
-      height: 560,
+      // 4컬럼 보드 + 이번 주 목록이 스크롤 없이 들어가는 크기. 보드가 남는 높이를 가져가므로
+      // 창을 줄여도 세로 스크롤 대신 컬럼 안쪽만 스크롤된다.
+      width: 1060,
+      height: 720,
       resizable: true,
       alwaysOnTop: false,
     });
     palette.onMessage(async (msg) => {
       switch (msg?.type) {
         case "todo.ready":
+          push();
+          break;
+        case "todo.discard": {
+          const r = discardTask(tasks, discarded, msg.id);
+          tasks = r.tasks; discarded = r.discarded;
+          await storage.setJson("discarded", discarded);
+          await save();
+          break;
+        }
+        case "todo.restore": {
+          const r = restoreTask(tasks, discarded, msg.id);
+          tasks = r.tasks; discarded = r.discarded;
+          await storage.setJson("discarded", discarded);
+          await save();
+          break;
+        }
+        case "todo.purge":
+          discarded = msg.id ? discarded.filter((t) => t.id !== msg.id) : [];
+          await storage.setJson("discarded", discarded);
           push();
           break;
         case "todo.focusToggle":

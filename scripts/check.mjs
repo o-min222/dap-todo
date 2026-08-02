@@ -167,6 +167,37 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.match(text, /초안 정리했어/);
 }
 
+/* ── 버리는 곳 (되돌릴 수 있는 폐기) ── */
+{
+  const base = new Date(2026, 7, 2, 9, 0);
+  let list = plugin.applyCommand([], { type: "add", task: { title: "접은 계획", priority: "high" } }, base);
+  const id = list[0].id;
+  let bin = [];
+
+  ({ tasks: list, discarded: bin } = plugin.discardTask(list, bin, id, base));
+  assert.equal(list.length, 0, "보드에서 빠진다");
+  assert.equal(bin.length, 1, "삭제가 아니라 '버림' 으로 옮긴다");
+  assert.ok(bin[0].discardedAt, "언제 버렸는지 남는다");
+  assert.equal(bin[0].priority, "high", "내용은 그대로 보존된다");
+
+  ({ tasks: list, discarded: bin } = plugin.restoreTask(list, bin, id));
+  assert.equal(list.length, 1);
+  assert.equal(bin.length, 0);
+  assert.equal(list[0].status, "todo", "되돌리면 '할 일' 부터 다시 시작");
+  assert.equal(list[0].discardedAt, undefined, "되돌린 항목에 버린 시각이 남으면 안 된다");
+  assert.equal(list[0].title, "접은 계획");
+
+  // 없는 id 는 아무것도 바꾸지 않는다
+  const before = { tasks: list, discarded: bin };
+  assert.deepEqual(plugin.discardTask(list, bin, "없는id", base), before);
+  assert.deepEqual(plugin.restoreTask(list, bin, "없는id"), before);
+  assert.deepEqual(plugin.discardTask(null, null, "x", base), { tasks: [], discarded: [] });
+
+  // 버린 항목이 무한정 쌓이지 않는다
+  const many = Array.from({ length: 120 }, (_, i) => ({ id: `d${i}`, title: `x${i}` }));
+  assert.ok(plugin.discardTask([{ id: "z", title: "z" }], many, "z", base).discarded.length <= 100);
+}
+
 /* ── 이번 주 처리할 건 (칸반 위 목록) ── */
 {
   const base = new Date(2026, 7, 2, 9, 0);   // 2026-08-02 (일)
