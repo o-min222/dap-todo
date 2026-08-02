@@ -64,6 +64,7 @@
   .stat span { color: var(--muted); font-size: 11px; }
   .stat.alert b { color: var(--danger); }
   .stat.today b { color: var(--warn); }
+  .stat.hold b { color: var(--muted); }
   .bar { height: 3px; background: var(--track); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
   .sep { width: 1px; align-self: stretch; background: var(--line); }
@@ -78,6 +79,8 @@
   .pri.high { background: var(--hi-bg); color: var(--hi-fg); }
   .pri.medium { background: var(--md-bg); color: var(--md-fg); }
   .pri.low { background: var(--lo-bg); color: var(--lo-fg); }
+  .pri.hold { background: var(--track); color: var(--muted); }
+  .row.held { opacity: .72; border-style: dashed; }
 
   /* ── 리스트 ── */
   .row { display: flex; gap: 9px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin-bottom: 6px; }
@@ -89,7 +92,10 @@
   .tag { font-size: 11px; color: var(--muted); }
 
   /* ── 칸반 ── */
-  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: start; }
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; align-items: start; }
+  /* 보류 컬럼은 한 톤 죽여 "지금 안 하는 것"으로 읽히게 한다. */
+  .col.hold { background: transparent; border-style: dashed; }
+  .col.hold .chip { opacity: .72; }
   .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 150px; }
   .col h2 { margin: 2px 4px 8px; font-size: 12px; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; }
   .col.over { border-color: var(--accent); }
@@ -166,7 +172,12 @@ let tasks = [];
 let view = "list";
 let stats = null;
 
-const COLUMNS = [{ id: "todo", label: "할 일" }, { id: "doing", label: "진행 중" }, { id: "done", label: "완료" }];
+const COLUMNS = [
+  { id: "todo", label: "할 일" },
+  { id: "doing", label: "진행 중" },
+  { id: "hold", label: "보류" },
+  { id: "done", label: "완료" },
+];
 const PRI_LABEL = { high: "높음", medium: "보통", low: "낮음" };
 const send = (cmd) => bridge.postMessage({ type: "todo.cmd", cmd });
 
@@ -190,6 +201,7 @@ function renderStats() {
   const cell = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
   // 제목표시줄 안이라 폭이 귀하다 — 전체 건수는 아래 진행 막대가 이미 말해준다.
   const parts = [cell(stats.todo, "할 일"), cell(stats.doing, "진행"), cell(stats.done, "완료")];
+  if (stats.hold) parts.splice(2, 0, cell(stats.hold, "보류", "hold"));
   const alerts = [];
   if (stats.overdue) alerts.push(cell(stats.overdue, "지난 마감", "alert"));
   if (stats.today) alerts.push(cell(stats.today, "오늘 마감", "today"));
@@ -222,13 +234,16 @@ function renderList(main) {
     hint.innerHTML = "아직 할 일이 없어요.<br />아래에서 바로 추가하거나, 펫에게 <b>“할 일 추가 …”</b>라고 말해보세요.";
     main.append(hint);
   }
-  const sorted = [...tasks].sort((a, b) => (a.status === "done") - (b.status === "done") || a.order - b.order);
+  // 활동 중 → 보류 → 완료 순. 세워둔 일이 목록 위를 차지하지 않게 한다.
+  const bucket = (t) => (t.status === "done" ? 2 : t.status === "hold" ? 1 : 0);
+  const sorted = [...tasks].sort((a, b) => bucket(a) - bucket(b) || a.order - b.order);
   for (const t of sorted) {
     const info = dueInfo(t);
     const row = document.createElement("div");
-    row.className = "row" + (t.status === "done" ? " done" : "");
+    row.className = "row" + (t.status === "done" ? " done" : "") + (t.status === "hold" ? " held" : "");
     row.innerHTML =
       `<input type="checkbox" ${t.status === "done" ? "checked" : ""} />` +
+      (t.status === "hold" ? '<span class="pri hold">보류</span>' : "") +
       priChip(t.priority) +
       `<span class="title">${esc(t.title)}</span>` +
       (t.tags?.length ? `<span class="tag">${t.tags.map((x) => "#" + esc(x)).join(" ")}</span>` : "") +
@@ -249,7 +264,7 @@ function renderKanban(main) {
   const rank = { high: 0, medium: 1, low: 2, "": 3 };
   for (const col of COLUMNS) {
     const box = document.createElement("section");
-    box.className = "col";
+    box.className = "col" + (col.id === "hold" ? " hold" : "");
     const items = tasks.filter((x) => x.status === col.id)
       .sort((a, b) => rank[a.priority ?? ""] - rank[b.priority ?? ""] || a.order - b.order);
     box.innerHTML = `<h2><span>${col.label}</span><span>${items.length}</span></h2>`;
@@ -299,6 +314,8 @@ function openPage(existing, status) {
     due: existing?.due ?? "",
     priority: existing?.priority ?? "",
     tags: [...(existing?.tags ?? [])],
+    // 새로 만들면 열린 컬럼의 상태를, 편집이면 원래 상태를 기본값으로.
+    status: existing?.status ?? status ?? "todo",
   };
   const touched = editing ? { due: true, priority: true, tags: true } : {};
 
@@ -308,6 +325,13 @@ function openPage(existing, status) {
     <div class="body">
       <input class="page-title" id="p-title" placeholder="제목 없음" />
       <div class="props">
+        <div class="k">상태</div>
+        <div class="v seg" id="p-status">
+          <button data-s="todo">할 일</button>
+          <button data-s="doing">진행 중</button>
+          <button data-s="hold">보류</button>
+          <button data-s="done">완료</button>
+        </div>
         <div class="k">중요도</div>
         <div class="v seg" id="p-pri">
           <button data-p="" class="none">없음</button>
@@ -341,6 +365,18 @@ function openPage(existing, status) {
   el("p-tags").value = draft.tags.join(", ");
   const paintPri = () => [...el("p-pri").children].forEach((b) => b.classList.toggle("on", b.dataset.p === draft.priority));
   paintPri();
+  const paintStatus = () => [...el("p-status").children].forEach((b) => {
+    const on = b.dataset.s === draft.status;
+    b.classList.toggle("on", on);
+    b.classList.toggle("none", on); // .seg button.on.none = 강조색 (중요도 칩과 공용 스타일)
+  });
+  paintStatus();
+  el("p-status").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    draft.status = b.dataset.s;
+    paintStatus();
+  });
 
   el("p-pri").addEventListener("click", (e) => {
     const b = e.target.closest("button");
@@ -441,11 +477,12 @@ function openPage(existing, status) {
       due: el("p-due").value,
       priority: draft.priority,
       tags: el("p-tags").value.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean),
-      ...(status ? { status } : {}),   // 칸반 컬럼에서 열었으면 그 컬럼으로 들어간다
+      status: draft.status,
     };
     if (!payload.title && !payload.notes) return close();
     if (editing) {
       send({ type: "edit", id: existing.id, ...payload });
+      if (payload.status !== existing.status) send({ type: "move", id: existing.id, status: payload.status });
       return close();
     }
     // 등록 = AI가 한 번 검토·정리해서 넣는다. 실패해도 입력은 그대로 등록된다.

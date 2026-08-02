@@ -11,7 +11,14 @@ import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const STATUSES = ["todo", "doing", "done"];
+/** 보류(hold) = 의도적으로 세워둔 일. 완료가 아니므로 미완으로 집계된다. */
+const STATUSES = ["todo", "doing", "hold", "done"];
+/**
+ * 보류는 **먼저 꺼내지 않는다** — 말풍선 알림과 아침 브리핑에서 빠진다.
+ * 사용자가 일부러 세워둔 걸 펫이 들쑤시면 안 된다. 목록·통계·"할 일 뭐 있어?"처럼
+ * 사용자가 직접 물어보는 자리에는 그대로 나온다(숨기는 게 아니라 조용할 뿐).
+ */
+const isParked = (t) => t.status === "hold";
 /** 빈 문자열 = 중요도 없음. 노션처럼 "굳이 안 정해도 되는" 속성으로 둔다. */
 export const PRIORITIES = ["high", "medium", "low"];
 const MAX_AI_CHARS = 120;
@@ -256,6 +263,7 @@ export function stats(tasks, now = new Date()) {
     total: list.length,
     todo: list.filter((t) => t.status === "todo").length,
     doing: list.filter((t) => t.status === "doing").length,
+    hold: list.filter(isParked).length,
     done,
     overdue: byDue((d) => d < now && !isSameDay(d, now)),
     today: byDue((d) => isSameDay(d, now)),
@@ -277,16 +285,19 @@ export function summarizeForAi(tasks, now = new Date()) {
     return d && isSameDay(d, now);
   });
   const high = open.filter((t) => t.priority === "high");
+  const held = open.filter(isParked);
   const parts = [`미완 ${open.length}건`];
+  if (held.length) parts.push(`보류 ${held.length}건`);
   if (high.length) parts.push(`중요 ${high.length}건`);
   if (overdue.length) parts.push(`지난 마감 ${overdue.length}건`);
   if (today.length) parts.push(`오늘 마감: ${today.map((t) => t.title).join(", ")}`);
   return parts.join(" · ").slice(0, MAX_AI_CHARS);
 }
 
-/** 아침 브리핑 한 줄. 알릴 게 없으면 빈 문자열 — 호스트가 조용히 넘어간다. */
+/** 아침 브리핑 한 줄. 알릴 게 없으면 빈 문자열 — 호스트가 조용히 넘어간다.
+ *  보류는 빠진다 — 세워둔 일을 아침부터 다시 들이밀지 않는다. */
 export function briefingLine(tasks, now = new Date()) {
-  const open = (tasks ?? []).filter(isOpen);
+  const open = (tasks ?? []).filter((t) => isOpen(t) && !isParked(t));
   if (!open.length) return "";
   const due = open.filter((t) => {
     const d = dueDate(t);
@@ -297,11 +308,12 @@ export function briefingLine(tasks, now = new Date()) {
   return `${head} (오늘까지: ${due.map((t) => t.title).join(", ")})`.slice(0, 300);
 }
 
-/** 마감 lead분 이내이면서 아직 안 알린 항목. notified는 { [id]: dueISO }. */
+/** 마감 lead분 이내이면서 아직 안 알린 항목. notified는 { [id]: dueISO }.
+ *  보류는 알리지 않는다 — 사용자가 일부러 세워둔 일이다. */
 export function dueSoon(tasks, now = new Date(), leadMinutes = REMIND_LEAD_MIN, notified = {}) {
   const limit = new Date(now.getTime() + leadMinutes * 60_000);
   return (tasks ?? []).filter((t) => {
-    if (!isOpen(t)) return false;
+    if (!isOpen(t) || isParked(t)) return false;
     const d = dueDate(t);
     if (!d || d > limit) return false;
     // 마감을 고쳐 다시 다가오면 재알림 — 같은 마감으로는 한 번만.

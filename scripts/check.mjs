@@ -145,6 +145,31 @@ assert.equal(plugin.normalizeTask({ title: "x" }, now).priority, "", "기본은 
   assert.equal(plugin.stats([t({ due: "2026-07-20", status: "done", priority: "high" })], now).high, 0);
 }
 
+/* ── 보류(hold) ── */
+{
+  const t = (over) => plugin.normalizeTask({ title: "t", ...over }, now);
+  const held = t({ title: "세워둔 일", status: "hold", due: "2026-08-02T09:05", priority: "high" });
+  assert.equal(held.status, "hold", "hold 는 유효한 상태다");
+  const one = plugin.applyCommand([], { type: "add", task: { title: "a" } }, now);
+  assert.equal(plugin.applyCommand(one, { type: "move", id: one[0].id, status: "hold" }, now)[0].status, "hold");
+
+  // 보류는 완료가 아니다 — 미완으로 잡히고 통계에 따로 나온다.
+  const s = plugin.stats([held, t({ title: "b" })], now);
+  assert.equal(s.hold, 1);
+  assert.equal(s.done, 0);
+  assert.equal(s.percent, 0, "보류는 진행률에 완료로 잡히면 안 된다");
+  assert.match(plugin.summarizeForAi([held], now), /보류 1건/, "물어보면 보류도 알려준다");
+
+  // 보류는 먼저 꺼내지 않는다 — 말풍선 알림과 아침 브리핑에서 빠진다.
+  assert.deepEqual(plugin.dueSoon([held], now, 10, {}), [], "보류는 마감이 임박해도 알리지 않는다");
+  assert.equal(plugin.briefingLine([held], now), "", "보류뿐이면 브리핑할 게 없다");
+  assert.match(plugin.briefingLine([held, t({ title: "살아있는 일" })], now), /할 일 1건/, "보류는 브리핑 집계에서 빠진다");
+  // 보류를 풀면 다시 알린다.
+  const revived = { ...held, status: "todo" };
+  assert.equal(plugin.dueSoon([revived], now, 10, {}).length, 1);
+  assert.equal(plugin.applyCommand([held], { type: "clearDone" }).length, 1, "보류는 완료 정리에 지워지면 안 된다");
+}
+
 /* ── 로컬 힌트 파서 (노션 페이지 자동 채우기) ── */
 {
   const base = new Date(2026, 7, 2, 9, 0); // 2026-08-02 (일요일) 09:00
